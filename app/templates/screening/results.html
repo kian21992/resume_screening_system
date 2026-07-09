@@ -1,0 +1,128 @@
+{% extends 'base.html' %}
+{% block title %}Screening Results{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Candidate Rankings</h1>
+    
+    <div class="d-flex flex-wrap gap-2 justify-content-end">
+        <form class="d-flex flex-wrap gap-2" method="GET" action="{{ url_for('screening.screening_results') }}">
+            <select class="form-select" name="job_id" onchange="this.form.submit()" aria-label="Filter by job">
+                <option value="">All Jobs (Recent)</option>
+                {% for job in jobs %}
+                <option value="{{ job.id }}" {% if selected_job_id == job.id %}selected{% endif %}>{{ job.title }}</option>
+                {% endfor %}
+            </select>
+            <select class="form-select" name="reviewer_status" onchange="this.form.submit()" aria-label="Filter by reviewer decision">
+                <option value="">All Reviewer Decisions</option>
+                {% for status in reviewer_statuses %}
+                <option value="{{ status }}" {% if selected_reviewer_status == status %}selected{% endif %}>{{ status }}</option>
+                {% endfor %}
+            </select>
+        </form>
+        {% if results %}
+        <form method="POST" action="{{ url_for('screening.delete_all_candidates', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" class="m-0" onsubmit="return confirm('Are you sure you want to remove all candidates in the current filter? This action cannot be undone.');">
+            <button type="submit" class="btn btn-danger"><i class="bi bi-trash-fill me-1"></i> Remove All</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="glass-panel p-4 shadow-sm animate-fade-in">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <span class="text-muted small">
+            Showing {{ results|length }} candidate{% if results|length != 1 %}s{% endif %}
+            {% if selected_job_id %}for the selected job{% else %}from recent screenings{% endif %}{% if selected_reviewer_status %} with reviewer decision: {{ selected_reviewer_status }}{% endif %}.
+        </span>
+        {% if selected_job_id %}
+        <a href="{{ url_for('resume.upload') }}" class="btn btn-sm btn-outline-light">
+            <i class="bi bi-file-earmark-arrow-up me-1"></i> Add More Resumes
+        </a>
+        {% endif %}
+    </div>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Candidate</th>
+                    <th>Target Job</th>
+                    <th style="width: 30%;">Fit Score</th>
+                    <th>Recommendation</th>
+                    <th>Human Review</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for res in results %}
+                <tr>
+                    <td class="fw-bold text-white"><i class="bi bi-person-badge text-primary me-2"></i>{{ res.applicant.name }}</td>
+                    <td>
+                        <span class="text-light">
+                            {{ res.job.title }}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="d-flex align-items-center">
+                            <span class="fw-bold fs-6 me-3 {% if res.fit_score >= 75 %}text-success{% elif res.fit_score >= 50 %}text-warning{% else %}text-danger{% endif %}" style="min-width: 45px;">
+                                {{ res.fit_score }}%
+                            </span>
+                            <div class="progress flex-grow-1" style="height: 6px; background-color: rgba(255,255,255,0.06);">
+                                <div class="progress-bar {% if res.fit_score >= 75 %}bg-success{% elif res.fit_score >= 50 %}bg-warning{% else %}bg-danger{% endif %}" role="progressbar" style="width: {{ res.fit_score }}%;"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        {% if res.recommendation_label == 'Qualified' %}
+                            <span class="badge badge-qualified px-3 py-1.5 rounded-pill"><i class="bi bi-check-circle-fill me-1"></i>Qualified</span>
+                        {% elif res.recommendation_label == 'For Review' %}
+                            <span class="badge badge-review px-3 py-1.5 rounded-pill"><i class="bi bi-exclamation-circle-fill me-1"></i>For Review</span>
+                        {% else %}
+                            <span class="badge badge-unqualified px-3 py-1.5 rounded-pill"><i class="bi bi-x-circle-fill me-1"></i>Not Qualified</span>
+                        {% endif %}
+                        {% set confidence = res.confidence_level or 'Medium' %}
+                        <div class="mt-2">
+                            {% if confidence == 'High' %}
+                            <span class="badge bg-success bg-opacity-75"><i class="bi bi-shield-check me-1"></i>High Confidence</span>
+                            {% elif confidence == 'Low' %}
+                            <span class="badge bg-danger bg-opacity-75"><i class="bi bi-shield-exclamation me-1"></i>Low Confidence</span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-shield-minus me-1"></i>Medium Confidence</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        {% set human_status = res.reviewer_status or 'Pending Review' %}
+                        {% if human_status == 'Move to Interview' %}
+                        <span class="badge bg-success"><i class="bi bi-calendar-check me-1"></i>Move to Interview</span>
+                        {% elif human_status == 'Rejected' %}
+                        <span class="badge bg-danger"><i class="bi bi-person-x me-1"></i>Rejected</span>
+                        {% elif human_status == 'Needs Clarification' %}
+                        <span class="badge bg-warning text-dark"><i class="bi bi-question-circle me-1"></i>Needs Clarification</span>
+                        {% elif human_status == 'Reviewed' %}
+                        <span class="badge bg-info text-dark"><i class="bi bi-person-check me-1"></i>Reviewed</span>
+                        {% else %}
+                        <span class="badge bg-secondary"><i class="bi bi-clock me-1"></i>Pending Review</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <div class="d-flex justify-content-end gap-2">
+                            <a href="{{ url_for('screening.result_detail', result_id=res.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" class="btn btn-sm btn-outline-light"><i class="bi bi-eye"></i> View Analysis</a>
+                            <form action="{{ url_for('screening.delete_candidate', result_id=res.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" method="POST" class="m-0" onsubmit="return confirm('Are you sure you want to remove this candidate? This cannot be undone.');">
+                                <button type="submit" class="btn btn-sm btn-danger px-2.5 py-1.5"><i class="bi bi-trash"></i></button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-5">
+                        <i class="bi bi-inbox fs-1 d-block mb-3 text-muted"></i>
+                        No candidates found for this selection.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

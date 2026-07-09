@@ -1,0 +1,159 @@
+{% extends 'base.html' %}
+{% block title %}Upload Resumes{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center animate-fade-in">
+    <div class="col-lg-8">
+        <div class="glass-panel p-5 mt-4 shadow-lg">
+            <div class="card-body">
+                <h2 class="text-center mb-5 border-bottom border-secondary pb-3 text-white fw-bold"><i class="bi bi-file-earmark-arrow-up text-primary me-2"></i>Submit Candidate Resumes</h2>
+                
+                <form method="POST" enctype="multipart/form-data">
+                    <div class="mb-4">
+                        <label for="job_id" class="form-label">Target Job Position <span class="text-danger">*</span></label>
+                        <select class="form-select" id="job_id" name="job_id" required>
+                            <option value="" disabled selected>Select a job position...</option>
+                            {% for job in jobs %}
+                            <option value="{{ job.id }}">{{ job.title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="mb-5">
+                        <label class="form-label d-block text-center mb-3">Resume Documents <span class="text-danger">*</span></label>
+                        <div class="file-upload-wrapper text-center d-flex flex-column align-items-center justify-content-center p-5" id="drop-zone">
+                            <div id="file-input-holder">
+                                <input type="file" name="file" class="resume-file-input" accept=".pdf,.docx" multiple required>
+                            </div>
+                            <div class="upload-icon-container mb-3 d-flex align-items-center justify-content-center rounded-circle" style="background: rgba(255,255,255,0.03); width: 80px; height: 80px; border: 1px solid rgba(255,255,255,0.05); transition: all 0.3s ease;">
+                                <i class="bi bi-cloud-arrow-up text-muted fs-1" id="upload-icon"></i>
+                            </div>
+                            <h5 class="text-white fw-bold mb-1">Add up to 10 resumes</h5>
+                            <p class="text-muted small mb-0">Click again to add more files to the same screening batch</p>
+                            <span class="text-muted mt-2" style="font-size: 0.75rem;">Supports PDF and DOCX</span>
+                        </div>
+                        <div id="file-name-display" class="selected-file-list mt-3"></div>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary py-3 fs-5" id="submitBtn">
+                            <i class="bi bi-cpu-fill me-2"></i> Analyze & Screen Resumes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const selectedResumeFiles = [];
+    const fileInputHolder = document.getElementById('file-input-holder');
+    const fileNameDisplay = document.getElementById('file-name-display');
+
+    function fileKey(file) {
+        return file.name + '|' + file.size + '|' + file.lastModified;
+    }
+
+    function createFreshFileInput() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.name = 'file';
+        input.className = 'resume-file-input';
+        input.accept = '.pdf,.docx';
+        input.multiple = true;
+        input.required = selectedResumeFiles.length === 0;
+        input.addEventListener('change', handleFileSelection);
+        fileInputHolder.appendChild(input);
+        return input;
+    }
+
+    function renderSelectedFiles() {
+        fileNameDisplay.innerHTML = '';
+
+        if (selectedResumeFiles.length === 0) {
+            return;
+        }
+
+        const summary = document.createElement('div');
+        summary.className = 'selected-file-summary';
+        summary.innerHTML = '<i class="bi bi-file-earmark-check-fill me-1"></i> ' + selectedResumeFiles.length + ' selected';
+        fileNameDisplay.appendChild(summary);
+
+        selectedResumeFiles.forEach(file => {
+            const row = document.createElement('div');
+            const icon = document.createElement('i');
+            const name = document.createElement('span');
+
+            row.className = 'selected-file-row';
+            row.title = file.name;
+            icon.className = 'bi bi-file-earmark-text me-2 flex-shrink-0';
+            name.className = 'selected-file-name';
+            name.textContent = file.name;
+
+            row.appendChild(icon);
+            row.appendChild(name);
+            fileNameDisplay.appendChild(row);
+        });
+    }
+
+    function handleFileSelection(e) {
+        if(e.target.files.length > 0) {
+            const existingKeys = new Set(selectedResumeFiles.map(fileKey));
+            const incomingFiles = Array.from(e.target.files);
+            const uniqueIncomingFiles = incomingFiles.filter(file => !existingKeys.has(fileKey(file)));
+
+            if (uniqueIncomingFiles.length === 0) {
+                e.target.value = '';
+                renderSelectedFiles();
+                return;
+            }
+
+            if (selectedResumeFiles.length + uniqueIncomingFiles.length > 10) {
+                e.target.value = '';
+                fileNameDisplay.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i> You can only add ' + (10 - selectedResumeFiles.length) + ' more resume(s).';
+                return;
+            }
+
+            if (uniqueIncomingFiles.length !== incomingFiles.length) {
+                e.target.value = '';
+                renderSelectedFiles();
+                return;
+            }
+
+            uniqueIncomingFiles.forEach(file => selectedResumeFiles.push(file));
+            e.target.classList.add('stored-file-input');
+            e.target.required = false;
+            e.target.style.display = 'none';
+            createFreshFileInput();
+            renderSelectedFiles();
+            document.querySelector('.file-upload-wrapper').style.borderColor = 'var(--secondary-color)';
+            document.querySelector('.file-upload-wrapper').style.background = 'rgba(6, 182, 212, 0.05)';
+            document.querySelector('.upload-icon-container').style.background = 'rgba(6, 182, 212, 0.1)';
+            document.querySelector('.upload-icon-container').style.borderColor = 'rgba(6, 182, 212, 0.2)';
+            document.getElementById('upload-icon').className = 'bi bi-file-earmark-text text-info fs-1';
+        }
+    }
+
+    document.querySelector('.resume-file-input').addEventListener('change', handleFileSelection);
+
+    document.querySelector('form').addEventListener('submit', function() {
+        if (selectedResumeFiles.length === 0) {
+            return;
+        }
+
+        document.querySelectorAll('.resume-file-input').forEach(input => {
+            if (!input.files.length) {
+                input.removeAttribute('name');
+                input.required = false;
+            }
+        });
+
+        let btn = document.getElementById('submitBtn');
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Processing Resume Batch...';
+        btn.classList.add('disabled');
+    });
+</script>
+{% endblock %}

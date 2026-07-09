@@ -1,0 +1,126 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0">Analytics Dashboard</h1>
+    <a href="{{ url_for('resume.upload') }}" class="btn btn-primary"><i class="bi bi-cloud-arrow-up-fill me-2"></i> Upload Resume</a>
+</div>
+
+<div class="row g-4 mb-5">
+    <!-- Top Stats -->
+    <div class="col-md-4">
+        <div class="glass-panel dashboard-card p-4">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h6 class="text-muted text-uppercase fw-bold small mb-2">Total Candidates</h6>
+                    <h2 class="display-5 fw-bold mb-0 text-white">{{ stats.total_applicants }}</h2>
+                </div>
+                <div class="rounded-circle p-3 d-flex align-items-center justify-content-center" style="background: rgba(99, 102, 241, 0.1); width: 60px; height: 60px;">
+                    <i class="bi bi-people text-primary fs-3"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="glass-panel dashboard-card p-4">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h6 class="text-muted text-uppercase fw-bold small mb-2">Active Jobs</h6>
+                    <h2 class="display-5 fw-bold mb-0 text-white">{{ stats.total_jobs }}</h2>
+                </div>
+                <div class="rounded-circle p-3 d-flex align-items-center justify-content-center" style="background: rgba(6, 182, 212, 0.1); width: 60px; height: 60px;">
+                    <i class="bi bi-briefcase text-info fs-3"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="glass-panel dashboard-card p-4">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h6 class="text-muted text-uppercase fw-bold small mb-2">Resumes Scanned</h6>
+                    <h2 class="display-5 fw-bold mb-0 text-white">{{ stats.total_resumes }}</h2>
+                </div>
+                <div class="rounded-circle p-3 d-flex align-items-center justify-content-center" style="background: rgba(16, 185, 129, 0.1); width: 60px; height: 60px;">
+                    <i class="bi bi-file-earmark-arrow-up text-success fs-3"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Chart -->
+    <div class="col-md-6">
+        <div class="glass-panel p-4 h-100 shadow-sm">
+            <h4 class="mb-4 fw-bold">Candidate Distribution</h4>
+            <div style="position: relative; height: 260px; display: flex; justify-content: center; align-items: center;">
+                <canvas id="distributionChart" style="max-height: 250px;"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recent Jobs -->
+    <div class="col-md-6">
+        <div class="glass-panel p-4 h-100 shadow-sm">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="mb-0 fw-bold">Recent Job Postings</h4>
+                <a href="{{ url_for('job.list_jobs') }}" class="btn btn-sm btn-outline-light">View All</a>
+            </div>
+            <div class="list-group list-group-flush bg-transparent">
+                {% for job in recent_jobs %}
+                <a href="{{ url_for('job.view_job', job_id=job.id) }}" class="list-group-item list-group-item-action bg-transparent text-light border-secondary py-3 px-0">
+                    <div class="d-flex w-100 justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0 fw-bold" style="font-size: 1.1rem; color: var(--text-main);">{{ job.title }}</h5>
+                        <small class="text-muted d-flex align-items-center gap-1"><i class="bi bi-calendar3"></i> {{ job.created_at|local_datetime('%b %d, %Y') }}</small>
+                    </div>
+                    <div class="d-flex flex-wrap gap-1 mt-1">
+                        {% for skill in job.required_skills.split(',')[:4] %}
+                        <span class="badge bg-secondary bg-opacity-25 text-light border border-secondary rounded-pill small" style="font-size: 0.75rem;">{{ skill.strip() }}</span>
+                        {% endfor %}
+                        {% if job.required_skills.split(',')|length > 4 %}
+                        <span class="text-muted small align-self-center ms-1">+{{ job.required_skills.split(',')|length - 4 }} more</span>
+                        {% endif %}
+                    </div>
+                </a>
+                {% else %}
+                <p class="text-muted py-3">No jobs posted yet.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const ctx = document.getElementById('distributionChart').getContext('2d');
+    const distributionChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Qualified', 'For Review', 'Not Qualified'],
+            datasets: [{
+                data: [{{ stats.qualified }}, {{ stats.for_review }}, {{ stats.not_qualified }}],
+                backgroundColor: [
+                    'rgba(16, 185, 129, 0.8)', // Success
+                    'rgba(245, 158, 11, 0.8)', // Warning
+                    'rgba(244, 63, 94, 0.8)'   // Danger
+                ],
+                borderColor: '#111827',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#94a3b8', font: { family: 'Inter', weight: '500' } }
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

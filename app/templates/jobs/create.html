@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+{% block title %}Create Job Listing{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex align-items-center">
+    <a href="{{ url_for('job.list_jobs') }}" class="btn btn-sm btn-outline-light me-3"><i class="bi bi-arrow-left"></i> Back</a>
+    <h1 class="mb-0">Create New Job Listing</h1>
+</div>
+
+<div class="row g-4 animate-fade-in">
+    <div class="col-lg-8">
+        <div class="glass-panel p-4 shadow-sm">
+            <div class="card-body">
+                <form method="POST">
+                    <h4 class="mb-4 fw-bold text-white border-bottom border-secondary pb-2"><i class="bi bi-info-circle text-primary me-2"></i>Basic Information</h4>
+                    <div class="mb-3">
+                        <label for="title" class="form-label">Job Title <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="title" name="title" required placeholder="e.g., Senior Python Developer">
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="experience_req" class="form-label">Minimum Experience (Years)</label>
+                            <input type="number" class="form-control" id="experience_req" name="experience_req" min="0" value="0">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="education_req" class="form-label">Minimum Education</label>
+                            <input type="text" class="form-control" id="education_req" name="education_req" placeholder="e.g., Bachelor's in CS">
+                        </div>
+                    </div>
+                    
+                    <h4 class="mb-4 mt-5 fw-bold text-white border-bottom border-secondary pb-2"><i class="bi bi-tags text-primary me-2"></i>Skill Requirements</h4>
+                    
+                    <div class="mb-3">
+                        <label for="required_skills" class="form-label">Required Skills (Comma-separated) <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="required_skills" name="required_skills" rows="3" required placeholder="Please enter a text here"></textarea>
+                        <div class="form-text text-muted mt-1"><i class="bi bi-lightbulb"></i> These skills drive the weighted skills score.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="critical_skills" class="form-label">Critical Skills (Comma-separated)</label>
+                        <textarea class="form-control" id="critical_skills" name="critical_skills" rows="2" placeholder="Please enter a text here"></textarea>
+                        <div class="form-text text-muted mt-1"><i class="bi bi-exclamation-octagon"></i> Missing critical skills can force "Not Qualified" when enforcement is enabled.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="preferred_skills" class="form-label">Preferred Skills (Comma-separated)</label>
+                        <textarea class="form-control" id="preferred_skills" name="preferred_skills" rows="2" placeholder="Please enter a text here"></textarea>
+                    </div>
+                    
+                    <h4 class="mb-4 mt-5 fw-bold text-white border-bottom border-secondary pb-2"><i class="bi bi-cpu text-primary me-2"></i>AI Screening Criteria</h4>
+                    
+                    <div class="row align-items-center">
+                        <div class="col-md-6 mb-3">
+                            <label for="min_fit_score" class="form-label">Minimum Fit Score for Review (%)</label>
+                            <input type="number" class="form-control" id="min_fit_score" name="min_fit_score" min="0" max="100" value="50">
+                            <div class="form-text text-muted mt-1"><i class="bi bi-shield-exclamation"></i> Candidates below this score will be auto-marked "Not Qualified".</div>
+                        </div>
+                        <div class="col-md-6 mb-3 d-flex align-items-center mt-md-3">
+                            <div class="form-check form-switch p-3 rounded border border-secondary" style="background: rgba(255,255,255,0.01); width: 100%;">
+                                <input class="form-check-input ms-0 me-3" type="checkbox" role="switch" id="requires_all_critical" name="requires_all_critical" checked>
+                                <label class="form-check-label text-light fw-semibold" for="requires_all_critical">Enforce Critical Skills</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-grid mt-5">
+                        <button type="submit" class="btn btn-primary py-3 fs-5"><i class="bi bi-rocket-takeoff-fill me-2"></i>Publish Job & Initialize Engine</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="glass-panel p-4 sticky-top shadow-sm" style="top: 100px;">
+            <h5 class="fw-bold border-bottom border-secondary pb-2 text-white"><i class="bi bi-lightbulb-fill text-warning me-2"></i>How it works</h5>
+            <p class="text-muted small mt-3 leading-relaxed">
+                The AI Screening Engine uses Natural Language Processing to extract candidates' skills and match them against your job requirements.
+            </p>
+            <ul class="text-muted small ps-3 mt-3">
+                <li class="mb-2"><strong>Required Skills</strong> heavily impact the Fit Score. Be specific.</li>
+                <li class="mb-2"><strong>Critical Skills</strong> are must-haves when enforcement is enabled.</li>
+                <li class="mb-2"><strong>Experience & Education</strong> are used contextually to boost candidate rankings.</li>
+                <li><strong>Min Fit Score</strong> acts as the threshold between "For Review" and "Not Qualified".</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

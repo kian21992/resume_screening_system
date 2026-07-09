@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% block title %}{{ job.title }} | Job Details{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex align-items-center justify-content-between animate-fade-in">
+    <div class="d-flex align-items-center">
+        <a href="{{ url_for('job.list_jobs') }}" class="btn btn-sm btn-outline-light me-3"><i class="bi bi-arrow-left"></i> Back</a>
+        <h1 class="mb-0 fw-bold">{{ job.title }}</h1>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <a href="{{ url_for('screening.screening_results', job_id=job.id) }}" class="btn btn-success"><i class="bi bi-people-fill me-2"></i> View Candidates</a>
+        <a href="{{ url_for('job.edit_job', job_id=job.id) }}" class="btn btn-primary"><i class="bi bi-pencil-fill me-1"></i> Edit Job</a>
+        <form action="{{ url_for('job.delete_job', job_id=job.id) }}" method="POST" class="m-0" onsubmit="return confirm('Are you sure you want to delete this job and all associated candidate records? This cannot be undone.');">
+            <button type="submit" class="btn btn-danger"><i class="bi bi-trash-fill me-1"></i> Delete Job</button>
+        </form>
+    </div>
+</div>
+
+<div class="row g-4 animate-fade-in">
+    <div class="col-lg-8">
+        <div class="glass-panel p-4 mb-4 shadow-sm">
+            <div class="card-body">
+                <h4 class="mb-4 border-bottom border-secondary pb-3 text-white"><i class="bi bi-card-checklist text-primary me-2"></i>Job Requirements</h4>
+                
+                <div class="mb-4">
+                    <h6 class="text-muted text-uppercase small fw-bold mb-3"><i class="bi bi-check-circle-fill text-primary me-2"></i>Required Skills</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for skill in job.required_skills.split(',') %}
+                        <span class="badge bg-primary bg-opacity-25 text-primary border border-primary px-3 py-2 fs-6 rounded-pill fw-semibold">{{ skill.strip() }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                {% if job.critical_skills %}
+                <div class="mb-4 mt-5">
+                    <h6 class="text-muted text-uppercase small fw-bold mb-3"><i class="bi bi-exclamation-octagon-fill text-danger me-2"></i>Critical Skills</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for skill in job.critical_skills.split(',') %}
+                        <span class="badge bg-danger bg-opacity-25 text-danger border border-danger px-3 py-2 fs-6 rounded-pill fw-semibold">{{ skill.strip() }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if job.preferred_skills %}
+                <div class="mb-4 mt-5">
+                    <h6 class="text-muted text-uppercase small fw-bold mb-3"><i class="bi bi-star-fill text-info me-2"></i>Preferred Skills</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for skill in job.preferred_skills.split(',') %}
+                        <span class="badge bg-info bg-opacity-25 text-info border border-info px-3 py-2 fs-6 rounded-pill fw-semibold">{{ skill.strip() }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="glass-panel p-4 mb-4 shadow-sm">
+            <h5 class="border-bottom border-secondary pb-3 mb-3 text-white"><i class="bi bi-info-circle text-primary me-2"></i>Job Details</h5>
+            <ul class="list-unstyled mb-0">
+                <li class="mb-3 d-flex align-items-center justify-content-between p-2 rounded" style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.03);">
+                    <small class="text-muted"><i class="bi bi-briefcase me-2"></i>Experience Required</small>
+                    <strong class="text-white">{{ job.experience_req }} Years</strong>
+                </li>
+                <li class="mb-3 d-flex align-items-center justify-content-between p-2 rounded" style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.03);">
+                    <small class="text-muted"><i class="bi bi-mortarboard me-2"></i>Education Level</small>
+                    <strong class="text-white">{{ job.education_req or 'Not Specified' }}</strong>
+                </li>
+                <li class="d-flex align-items-center justify-content-between p-2 rounded" style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.03);">
+                    <small class="text-muted"><i class="bi bi-calendar3 me-2"></i>Date Posted</small>
+                    <strong class="text-white">{{ job.created_at|local_datetime('%B %d, %Y') }}</strong>
+                </li>
+            </ul>
+        </div>
+        
+        <div class="glass-panel p-4 shadow-sm">
+            <h5 class="border-bottom border-secondary pb-3 mb-3 text-white"><i class="bi bi-cpu text-primary me-2"></i>AI Screening Rules</h5>
+            <ul class="list-unstyled mb-0">
+                <li class="mb-3 d-flex align-items-center justify-content-between p-2 rounded" style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.03);">
+                    <small class="text-muted"><i class="bi bi-speedometer2 me-2"></i>Minimum Fit Score</small>
+                    <span class="badge bg-warning bg-opacity-25 text-warning border border-warning fs-6 px-3 rounded-pill fw-bold">{{ criteria.min_fit_score }}%</span>
+                </li>
+                <li class="d-flex align-items-center justify-content-between p-2 rounded" style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.03);">
+                    <small class="text-muted"><i class="bi bi-exclamation-octagon me-2"></i>Require Critical Skills</small>
+                    <strong class="text-white">{{ 'Yes' if criteria.requires_all_critical else 'No' }}</strong>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

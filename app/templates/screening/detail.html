@@ -1,0 +1,598 @@
+{% extends 'base.html' %}
+{% block title %}AI Analysis | Candidate #{{ applicant.id }}{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex align-items-center justify-content-between">
+    <div class="d-flex align-items-center">
+        <a href="{{ url_for('screening.screening_results', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" class="btn btn-sm btn-outline-light me-3"><i
+                class="bi bi-arrow-left"></i> Rankings</a>
+        <h1 class="mb-0">Candidate Analysis</h1>
+    </div>
+
+    <div class="d-flex flex-wrap align-items-center justify-content-end gap-2">
+        {% if result.recommendation_label == 'Qualified' %}
+        <span class="badge badge-qualified px-4 py-2 fs-5 rounded-pill"><i class="bi bi-check-circle me-2"></i>
+            Qualified</span>
+        {% elif result.recommendation_label == 'For Review' %}
+        <span class="badge badge-review px-4 py-2 fs-5 rounded-pill"><i class="bi bi-exclamation-triangle me-2"></i> For
+            Review</span>
+        {% else %}
+        <span class="badge badge-unqualified px-4 py-2 fs-5 rounded-pill"><i class="bi bi-x-circle me-2"></i> Not
+            Qualified</span>
+        {% endif %}
+
+        {% set confidence = result.confidence_level or 'Medium' %}
+        {% if confidence == 'High' %}
+        <span class="badge bg-success px-3 py-2 rounded-pill"><i class="bi bi-shield-check me-1"></i>High Confidence</span>
+        {% elif confidence == 'Low' %}
+        <span class="badge bg-danger px-3 py-2 rounded-pill"><i class="bi bi-shield-exclamation me-1"></i>Low Confidence</span>
+        {% else %}
+        <span class="badge bg-warning text-dark px-3 py-2 rounded-pill"><i class="bi bi-shield-minus me-1"></i>Medium Confidence</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-4 animate-fade-in">
+    <!-- Left Column: Scores & Extracted Data -->
+    <div class="col-lg-4">
+        <!-- Fit Score Card -->
+        <div class="glass-panel p-4 mb-4 text-center shadow-sm">
+            <div class="card-body">
+                <h5 class="text-muted fw-bold mb-4">Overall Fit Score</h5>
+                <div class="position-relative d-inline-block">
+                    <!-- Simple radial progress imitation using pure CSS/SVG -->
+                    <svg width="180" height="180" viewBox="0 0 100 100"
+                        style="filter: drop-shadow(0 0 8px {% if result.fit_score >= 75 %}rgba(16, 185, 129, 0.2){% elif result.fit_score >= 50 %}rgba(245, 158, 11, 0.2){% else %}rgba(244, 63, 94, 0.2){% endif %});">
+                        <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="8" />
+                        <circle cx="50" cy="50" r="42" fill="none"
+                            stroke="{% if result.fit_score >= 75 %}#10b981{% elif result.fit_score >= 50 %}#fbbf24{% else %}#f43f5e{% endif %}"
+                            stroke-width="8" stroke-linecap="round" stroke-dasharray="263"
+                            stroke-dashoffset="{{ 263 - (263 * result.fit_score / 100) }}"
+                            transform="rotate(-90 50 50)" />
+                    </svg>
+                    <div class="position-absolute top-50 start-50 translate-middle text-center">
+                        <h1 class="mb-0 fw-bold display-6 text-white">{{ result.fit_score | int }}<small
+                                class="fs-4">%</small></h1>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Applicant Info -->
+        <div class="glass-panel p-4 mb-4 shadow-sm">
+            <div class="card-body">
+                <h5 class="border-bottom border-secondary pb-3 mb-3 text-white fw-bold"><i
+                        class="bi bi-person text-primary me-2"></i>Candidate Profile</h5>
+                <h4 class="text-white mb-3 fw-bold">{{ applicant.name }}</h4>
+                <ul class="list-unstyled mb-0">
+                    <li class="mb-3 d-flex align-items-center gap-2"><i class="bi bi-envelope text-muted"></i> <span
+                            class="text-light">{{ applicant.email or 'N/A' }}</span></li>
+                    <li class="mb-3 d-flex align-items-center gap-2"><i class="bi bi-telephone text-muted"></i> <span
+                            class="text-light">{{ applicant.phone or 'N/A' }}</span></li>
+                    <li class="d-flex align-items-center gap-2"><i class="bi bi-briefcase text-muted"></i> <span
+                            class="text-light">Role: {{ job.title }}</span></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="glass-panel p-4 mb-4 shadow-sm">
+            <div class="card-body">
+                <h5 class="border-bottom border-secondary pb-3 mb-3 text-white fw-bold"><i
+                        class="bi bi-clock-history text-primary me-2"></i>Audit Trail</h5>
+                <ul class="list-unstyled mb-0">
+                    <li class="mb-3 d-flex align-items-start gap-2">
+                        <i class="bi bi-person-up text-muted mt-1"></i>
+                        <span>
+                            <span class="d-block text-muted small">Uploaded By</span>
+                            <span class="text-light">{{ resume.uploader.username if resume.uploader else 'Not recorded' }}</span>
+                        </span>
+                    </li>
+                    <li class="mb-3 d-flex align-items-start gap-2">
+                        <i class="bi bi-calendar-check text-muted mt-1"></i>
+                        <span>
+                            <span class="d-block text-muted small">Date Screened</span>
+                            <span class="text-light">
+                                {% if result.screened_at %}
+                                {{ result.screened_at|local_datetime }}
+                                {% elif resume.upload_date %}
+                                {{ resume.upload_date|local_datetime }}
+                                {% else %}
+                                Not recorded
+                                {% endif %}
+                            </span>
+                        </span>
+                    </li>
+                    <li class="d-flex align-items-start gap-2">
+                        <i class="bi bi-person-check text-muted mt-1"></i>
+                        <span>
+                            <span class="d-block text-muted small">Date Reviewed</span>
+                            <span class="text-light">
+                                {{ result.reviewed_at|local_datetime if result.reviewed_at else 'Not reviewed yet' }}
+                            </span>
+                        </span>
+                    </li>
+                </ul>
+                <div class="text-muted small mt-3 pt-3" style="border-top:1px solid rgba(255,255,255,0.07);">
+                    Time zone: {{ display_timezone }}
+                </div>
+            </div>
+        </div>
+
+        {% set confidence = result.confidence_level or 'Medium' %}
+        <div class="glass-panel p-4 mb-4 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center justify-content-between gap-2 border-bottom border-secondary pb-3 mb-3">
+                    <h5 class="text-white fw-bold mb-0"><i class="bi bi-shield-check text-primary me-2"></i>Decision Confidence</h5>
+                    {% if confidence == 'High' %}
+                    <span class="badge bg-success">High</span>
+                    {% elif confidence == 'Low' %}
+                    <span class="badge bg-danger">Low</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark">Medium</span>
+                    {% endif %}
+                </div>
+                <p class="text-light small mb-0" style="line-height:1.65;">
+                    {{ result.confidence_reason or 'Confidence is based on the available extracted resume evidence.' }}
+                </p>
+            </div>
+        </div>
+
+        {% set human_status = result.reviewer_status or 'Pending Review' %}
+        <div class="glass-panel p-4 mb-4 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center justify-content-between gap-2 border-bottom border-secondary pb-3 mb-3">
+                    <h5 class="text-white fw-bold mb-0"><i class="bi bi-person-check text-primary me-2"></i>Human Review</h5>
+                    {% if human_status == 'Move to Interview' %}
+                    <span class="badge bg-success">Move to Interview</span>
+                    {% elif human_status == 'Rejected' %}
+                    <span class="badge bg-danger">Rejected</span>
+                    {% elif human_status == 'Needs Clarification' %}
+                    <span class="badge bg-warning text-dark">Needs Clarification</span>
+                    {% elif human_status == 'Reviewed' %}
+                    <span class="badge bg-info text-dark">Reviewed</span>
+                    {% else %}
+                    <span class="badge bg-secondary">Pending Review</span>
+                    {% endif %}
+                </div>
+
+                <form method="POST" action="{{ url_for('screening.update_review', result_id=result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}">
+                    <div class="mb-3">
+                        <label for="reviewer_status" class="form-label text-light small fw-semibold">Reviewer Decision</label>
+                        <select class="form-select" id="reviewer_status" name="reviewer_status" required>
+                            {% for status in ['Pending Review', 'Reviewed', 'Move to Interview', 'Rejected', 'Needs Clarification'] %}
+                            <option value="{{ status }}" {% if human_status == status %}selected{% endif %}>{{ status }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="reviewer_notes" class="form-label text-light small fw-semibold">Reviewer Notes</label>
+                        <textarea class="form-control" id="reviewer_notes" name="reviewer_notes" rows="5" maxlength="3000">{{ result.reviewer_notes or '' }}</textarea>
+                        <div class="text-muted small mt-1 text-end">3,000 character limit</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-check2-square me-2"></i>Save Review
+                    </button>
+                </form>
+
+                {% if result.reviewed_at %}
+                <div class="text-muted small mt-3 pt-3" style="border-top:1px solid rgba(255,255,255,0.07);">
+                    Updated by <span class="text-light">{{ result.reviewer.username if result.reviewer else 'Reviewer' }}</span>
+                    on {{ result.reviewed_at|local_datetime }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: AI Analysis -->
+    <div class="col-lg-8">
+        <div class="glass-panel p-4 shadow-sm h-100">
+            <div class="card-body">
+                <h4 class="mb-4 fw-bold text-white border-bottom border-secondary pb-3"><i
+                        class="bi bi-cpu text-primary me-2"></i>AI Analysis & Fit Rating</h4>
+                {# Split narrative into sentences for better readability #}
+                {% set sentences = result.summary.split('. ') %}
+                <div class="analysis-narrative mb-5" style="
+                    background: linear-gradient(135deg, rgba(99,102,241,0.06), rgba(16,185,129,0.04));
+                    border: 1px solid rgba(99,102,241,0.2);
+                    border-radius: 12px;
+                    padding: 1.5rem 1.75rem;">
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <span
+                            style="background: linear-gradient(135deg,#6366f1,#818cf8); width:32px; height:32px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                            <i class="bi bi-stars text-white" style="font-size:0.9rem;"></i>
+                        </span>
+                        <span class="fw-bold text-white" style="font-size:0.95rem; letter-spacing:0.01em;">Candidate Insight</span>
+                    </div>
+                    <div class="narrative-lines" style="display:flex; flex-direction:column; gap:0.65rem;">
+                        {% for sentence in sentences %}
+                        {% if sentence.strip() %}
+                        <p class="mb-0 text-light"
+                            style="font-size:0.95rem; line-height:1.7; padding: 0.5rem 0.75rem; border-radius: 8px; background: rgba(255,255,255,0.025);">
+                            {% if loop.first %}
+                            <i class="bi bi-arrow-right-circle-fill me-2" style="color:#818cf8; font-size:0.85rem;"></i>
+                            {% elif 'Recommendation:' in sentence %}
+                            <i class="bi bi-lightbulb-fill me-2" style="color:#fbbf24; font-size:0.85rem;"></i>
+                            {% elif 'missing' in sentence.lower() or 'does not meet' in sentence.lower() or 'falls
+                            short' in sentence.lower() or 'no verifiable' in sentence.lower() %}
+                            <i class="bi bi-exclamation-triangle-fill me-2"
+                                style="color:#f43f5e; font-size:0.85rem;"></i>
+                            {% else %}
+                            <i class="bi bi-check2-circle me-2" style="color:#10b981; font-size:0.85rem;"></i>
+                            {% endif %}
+                            {{ sentence.strip() }}{% if not sentence.strip().endswith('.') %}.{% endif %}
+                        </p>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+
+                    <div class="mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,0.09);">
+                        <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+                            <h6 class="mb-0 text-white fw-bold"><i class="bi bi-file-earmark-text text-info me-2"></i>Evidence from Resume</h6>
+                            <span class="text-muted small">{{ candidate_evidence.skill_total }} skill match{{ '' if candidate_evidence.skill_total == 1 else 'es' }}</span>
+                        </div>
+
+                        {% if candidate_evidence.skills %}
+                        <div class="mb-4">
+                            {% for item in candidate_evidence.skills %}
+                            <div class="py-2.5" style="border-bottom:1px solid rgba(255,255,255,0.055);">
+                                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                    <i class="bi bi-check-circle-fill text-success"></i>
+                                    <span class="text-white fw-semibold">{{ item.name }}</span>
+                                    <span class="small text-info">{{ item.kind }}</span>
+                                    <span class="small text-muted ms-auto">{{ item.section }}</span>
+                                </div>
+                                <div class="text-light ps-4" style="font-size:0.86rem; line-height:1.55; opacity:0.88;">
+                                    &ldquo;{{ item.excerpt }}&rdquo;
+                                </div>
+                            </div>
+                            {% endfor %}
+                            {% if candidate_evidence.skill_total > candidate_evidence.skills|length %}
+                            <div class="text-muted small pt-2">
+                                +{{ candidate_evidence.skill_total - candidate_evidence.skills|length }} additional matched skill{{ '' if candidate_evidence.skill_total - candidate_evidence.skills|length == 1 else 's' }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <div class="row g-4 mb-4">
+                            <div class="col-md-6">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <span class="text-white fw-semibold small"><i class="bi bi-briefcase text-primary me-2"></i>Work Evidence</span>
+                                    <span class="text-muted small">{{ candidate_evidence.experience_total }} record{{ '' if candidate_evidence.experience_total == 1 else 's' }}</span>
+                                </div>
+                                {% for item in candidate_evidence.experience[:2] %}
+                                <div class="py-2" style="border-bottom:1px solid rgba(255,255,255,0.055);">
+                                    <div class="text-white small fw-semibold">{{ item.job_title }}</div>
+                                    <div class="text-info small">{{ item.company }}{% if item.location and item.location != 'Not Identified' %} &middot; {{ item.location }}{% endif %}</div>
+                                    <div class="text-muted mt-1" style="font-size:0.78rem; line-height:1.45;">&ldquo;{{ item.excerpt }}&rdquo;</div>
+                                </div>
+                                {% else %}
+                                <div class="text-muted small">No verified work-history evidence extracted.</div>
+                                {% endfor %}
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <span class="text-white fw-semibold small"><i class="bi bi-mortarboard text-primary me-2"></i>Education Evidence</span>
+                                    <span class="text-muted small">{{ candidate_evidence.education_total }} record{{ '' if candidate_evidence.education_total == 1 else 's' }}</span>
+                                </div>
+                                {% for item in candidate_evidence.education[:2] %}
+                                <div class="py-2" style="border-bottom:1px solid rgba(255,255,255,0.055);">
+                                    <div class="text-white small fw-semibold">{{ item.degree }}</div>
+                                    <div class="text-info small">{{ item.institution }}</div>
+                                    <div class="text-muted mt-1" style="font-size:0.78rem; line-height:1.45;">&ldquo;{{ item.excerpt }}&rdquo;</div>
+                                </div>
+                                {% else %}
+                                <div class="text-muted small">No verified education evidence extracted.</div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        {% if candidate_evidence.experience_status or candidate_evidence.education_status %}
+                        <div class="py-3" style="border-top:1px solid rgba(255,255,255,0.07); border-bottom:1px solid rgba(255,255,255,0.07);">
+                            <div class="text-white fw-semibold small mb-2">Requirement Check</div>
+                            {% if candidate_evidence.experience_status %}
+                            <div class="d-flex align-items-start gap-2 mb-2 small">
+                                <i class="bi bi-{{ 'check-circle-fill text-success' if candidate_evidence.experience_status.met else 'exclamation-triangle-fill text-warning' }} mt-1"></i>
+                                <span class="text-light">Experience: {{ candidate_evidence.experience_status.detected }} year(s) detected against {{ candidate_evidence.experience_status.required }} required.</span>
+                            </div>
+                            {% endif %}
+                            {% if candidate_evidence.education_status %}
+                            <div class="d-flex align-items-start gap-2 small">
+                                <i class="bi bi-{{ 'check-circle-fill text-success' if candidate_evidence.education_status.met else 'exclamation-triangle-fill text-warning' }} mt-1"></i>
+                                <span class="text-light">Education: {{ 'meets' if candidate_evidence.education_status.met else 'does not clearly meet' }} the {{ candidate_evidence.education_status.required }} requirement.</span>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <div class="pt-3">
+                            <div class="text-white fw-semibold small mb-2"><i class="bi bi-exclamation-circle text-warning me-2"></i>Needs Review</div>
+                            {% if candidate_evidence.missing %}
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for item in candidate_evidence.missing %}
+                                <span class="text-danger small"><i class="bi bi-x-circle me-1"></i>{{ item.name }} <span class="text-muted">({{ item.kind }})</span></span>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <span class="text-muted small">No required or critical skill gap was detected.</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+
+                {% if result.decision_explanation %}
+                <div class="mb-5 p-4 rounded-3"
+                    style="background: rgba(255, 255, 255, 0.015); border: 1px solid rgba(255, 255, 255, 0.06);">
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <span
+                            style="background: rgba(20,184,166,0.16); width:32px; height:32px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                            <i class="bi bi-clipboard2-check text-info" style="font-size:0.95rem;"></i>
+                        </span>
+                        <span class="fw-bold text-white" style="font-size:0.95rem;">Qualification Decision Explanation</span>
+                    </div>
+                    {% for paragraph in result.decision_explanation.split('\n\n') %}
+                    {% if paragraph.strip() %}
+                    <p class="text-light mb-3" style="font-size:0.95rem; line-height:1.75;">
+                        {{ paragraph.strip() }}
+                    </p>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+
+                <h5 class="mb-4 fw-bold text-white"><i class="bi bi-tags text-primary me-2"></i>Skill Matching Breakdown
+                </h5>
+
+                {% set matched_critical = result.get_matched_critical_skills() %}
+                {% set missing_critical = result.get_missing_critical_skills() %}
+                {% if matched_critical or missing_critical or job.critical_skills %}
+                <div class="row g-4 mb-5">
+                    <div class="col-md-6">
+                        <div class="p-4 rounded-3 h-100"
+                            style="background-color: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.15);">
+                            <h6 class="text-success fw-bold mb-3"><i class="bi bi-shield-check me-2"></i>Matched
+                                Critical Skills</h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for skill in matched_critical %}
+                                <span class="badge bg-success text-white border border-success rounded-pill px-3 py-2"
+                                    style="font-size: 0.8rem;">{{ skill }}</span>
+                                {% else %}
+                                <span class="text-muted small">No critical skill matches found.</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="p-4 rounded-3 h-100"
+                            style="background-color: rgba(244, 63, 94, 0.04); border: 1px solid rgba(244, 63, 94, 0.15);">
+                            <h6 class="text-danger fw-bold mb-3"><i class="bi bi-shield-exclamation me-2"></i>Missing
+                                Critical Skills</h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for skill in missing_critical %}
+                                <span class="badge bg-danger text-white border border-danger rounded-pill px-3 py-2"
+                                    style="font-size: 0.8rem;">{{ skill }}</span>
+                                {% else %}
+                                <span
+                                    class="text-white bg-success bg-opacity-25 border border-success rounded-pill px-3 py-2 small fw-semibold">All
+                                    critical skills matched!</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="row g-4 mb-5">
+                    <div class="col-md-6">
+                        <div class="p-4 rounded-3 h-100"
+                            style="background-color: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.15);">
+                            <h6 class="text-success fw-bold mb-3"><i class="bi bi-check-circle-fill me-2"></i>Matched
+                                Skills</h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% set matched = result.get_matched_skills() %}
+                                {% for skill in matched %}
+                                <span class="badge bg-success text-white border border-success rounded-pill px-3 py-2"
+                                    style="font-size: 0.8rem;">{{ skill }}</span>
+
+                                {% else %}
+                                <span class="text-muted small">No exact skill matches found.</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="p-4 rounded-3 h-100"
+                            style="background-color: rgba(244, 63, 94, 0.04); border: 1px solid rgba(244, 63, 94, 0.15);">
+                            <h6 class="text-danger fw-bold mb-3"><i class="bi bi-x-circle-fill me-2"></i>Missing Skills
+                            </h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% set missing = result.get_missing_skills() %}
+                                {% for skill in missing %}
+                                <span class="badge bg-danger text-white border border-danger rounded-pill px-3 py-2"
+                                    style="font-size: 0.8rem;">{{ skill }}</span>
+                                {% else %}
+                                <span
+                                    class="text-white bg-success bg-opacity-25 border border-success rounded-pill px-3 py-2 small fw-semibold">All
+                                    required skills matched!</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <h5 class="mb-4 fw-bold text-white"><i class="bi bi-bar-chart-steps text-primary me-2"></i>Scoring
+                    Criteria Weights</h5>
+                <div class="mb-4 p-3 rounded-3"
+                    style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.03);">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted fw-medium">Required Skills Match <span class="badge rounded-pill"
+                                style="background:rgba(99,102,241,0.2);color:#818cf8;font-size:0.7rem;">50%
+                                weight</span></span>
+                        <span class="fw-bold text-white">{{ result.skill_score | int }}%</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-primary" style="width: {{ result.skill_score }}%"></div>
+                    </div>
+                </div>
+                <div class="mb-4 p-3 rounded-3"
+                    style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.03);">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted fw-medium">Work Experience Match <span class="badge rounded-pill"
+                                style="background:rgba(6,182,212,0.15);color:#06b6d4;font-size:0.7rem;">30%
+                                weight</span></span>
+                        <span class="fw-bold text-white">{{ result.experience_score | int }}%</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar"
+                            style="width: {{ result.experience_score }}%; background: linear-gradient(90deg, #06b6d4, #0891b2);">
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-4 p-3 rounded-3"
+                    style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.03);">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted fw-medium">Education Level Match <span class="badge rounded-pill"
+                                style="background:rgba(168,85,247,0.15);color:#a855f7;font-size:0.7rem;">20%
+                                weight</span></span>
+                        <span class="fw-bold text-white">{{ result.education_score | int }}%</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar"
+                            style="width: {{ result.education_score }}%; background: linear-gradient(90deg, #a855f7, #9333ea);">
+                        </div>
+                    </div>
+                </div>
+                {% if result.text_similarity_score is not none %}
+                <div class="mb-4 p-3 rounded-3"
+                    style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.03);">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted fw-medium">Resume-to-Job Text Similarity <span class="badge rounded-pill"
+                                style="background:rgba(20,184,166,0.15);color:#14b8a6;font-size:0.7rem;">reference
+                                metric</span></span>
+                        <span class="fw-bold text-white">{{ result.text_similarity_score | int }}%</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar"
+                            style="width: {{ result.text_similarity_score }}%; background: linear-gradient(90deg, #14b8a6, #0f766e);">
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <h5 class="mb-4 mt-5 fw-bold text-white"><i class="bi bi-briefcase text-primary me-2"></i>Extracted Work
+                    Experience History</h5>
+                <div class="table-responsive mb-5">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+                                <th
+                                    style="color: var(--text-muted); font-size: 0.8rem; font-weight: 700; padding: 0.75rem 0.5rem;">
+                                    Job Title</th>
+                                <th
+                                    style="color: var(--text-muted); font-size: 0.8rem; font-weight: 700; padding: 0.75rem 0.5rem;">
+                                    Company</th>
+                                <th
+                                    style="color: var(--text-muted); font-size: 0.8rem; font-weight: 700; padding: 0.75rem 0.5rem;">
+                                    Location</th>
+                                <th
+                                    style="color: var(--text-muted); font-size: 0.8rem; font-weight: 700; padding: 0.75rem 0.5rem;">
+                                    Years</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for exp in experience %}
+                            <tr>
+                                <td class="text-white py-2.5 px-1">{{ exp.job_title }}</td>
+                                <td class="text-light py-2.5 px-1">{{ exp.company }}</td>
+                                <td class="text-light py-2.5 px-1">{{ exp.location or 'N/A' }}</td>
+                                <td class="text-light py-2.5 px-1">{{ exp.years or 'N/A' }}</td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="text-muted text-center py-3">No work experience records
+                                    extracted.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <h5 class="mb-4 fw-bold text-white"><i class="bi bi-mortarboard text-primary me-2"></i>Extracted
+                    Education History</h5>
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+                                <th
+                                    style="color: var(--text-muted); font-size: 0.8rem; font-weight: 700; padding: 0.75rem 0.5rem;">
+                                    Degree</th>
+                                <th
+                                    style="color: var(--text-muted); font-size: 0.8rem; font-weight: 700; padding: 0.75rem 0.5rem;">
+                                    Institution</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for edu in education %}
+                            <tr>
+                                <td class="text-white py-2.5 px-1">{{ edu.degree }}</td>
+                                <td class="text-light py-2.5 px-1">{{ edu.institution }}</td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="2" class="text-muted text-center py-3">No education records extracted.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="glass-panel p-3 mt-4 shadow-sm d-flex flex-column flex-md-row align-items-stretch align-items-md-center justify-content-between gap-3"
+    style="position: sticky; bottom: 1rem; z-index: 20; border: 1px solid rgba(99,102,241,0.28);">
+    <div class="d-flex flex-column flex-sm-row gap-2">
+        {% if previous_result %}
+        <a href="{{ url_for('screening.result_detail', result_id=previous_result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}"
+            class="btn btn-outline-light">
+            <i class="bi bi-arrow-left me-2"></i>Previous
+        </a>
+        {% else %}
+        <button type="button" class="btn btn-outline-secondary" disabled>
+            <i class="bi bi-arrow-left me-2"></i>Previous
+        </button>
+        {% endif %}
+
+        {% if next_result %}
+        <a href="{{ url_for('screening.result_detail', result_id=next_result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}"
+            class="btn btn-primary">
+            Next Candidate<i class="bi bi-arrow-right ms-2"></i>
+        </a>
+        {% else %}
+        <button type="button" class="btn btn-secondary" disabled>
+            Next Candidate<i class="bi bi-arrow-right ms-2"></i>
+        </button>
+        {% endif %}
+    </div>
+
+    <div class="d-flex flex-column flex-sm-row align-items-stretch align-items-sm-center gap-3">
+        {% if candidate_position and candidate_total %}
+        <span class="text-light small text-center text-sm-start">
+            Candidate {{ candidate_position }} of {{ candidate_total }}
+        </span>
+        {% endif %}
+        <a href="{{ url_for('screening.screening_results', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}"
+            class="btn btn-outline-light">
+            <i class="bi bi-list-ul me-2"></i>Back to Rankings
+        </a>
+    </div>
+</div>
+{% endblock %}
