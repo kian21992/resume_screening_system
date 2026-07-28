@@ -303,6 +303,21 @@ class TestReviewerWorkflow(unittest.TestCase):
         self.assertIn(b"Maria Santos", response.data)
         self.assertNotIn(b"Ana Reyes", response.data)
 
+    def test_results_page_sorts_by_lowest_fit_score(self):
+        response = self.client.get("/screening_results?sort=fit_asc")
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(response.data.find(b"Ana Reyes"), response.data.find(b"Maria Santos"))
+
+    def test_results_page_sorts_by_actual_screening_date(self):
+        newest = self.client.get("/screening_results?sort=newest")
+        oldest = self.client.get("/screening_results?sort=oldest")
+        self.assertLess(newest.data.find(b"Ana Reyes"), newest.data.find(b"Maria Santos"))
+        self.assertLess(oldest.data.find(b"Maria Santos"), oldest.data.find(b"Ana Reyes"))
+
+    def test_sort_selection_applies_immediately(self):
+        response = self.client.get("/screening_results")
+        self.assertIn(b'name="sort" onchange="this.form.submit()"', response.data)
+
 
 if __name__ == "__main__":
     unittest.main()

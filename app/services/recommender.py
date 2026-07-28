@@ -153,7 +153,8 @@ def generate_analysis_narrative(job_title, fit_score, skill_score, exp_score, ed
                                 extracted_edu, experience_req, education_req,
                                 disqualified_by_critical_skills,
                                 matched_preferred=None, preferred_bonus=0.0,
-                                matched_critical_skills=None, missing_critical_skills=None):
+                                matched_critical_skills=None, missing_critical_skills=None,
+                                disqualification_reason=None):
     """
     Generates a unique, candidate-specific analysis narrative using all
     available evaluation signals. Each section is tailored to the actual data.
@@ -173,11 +174,18 @@ def generate_analysis_narrative(job_title, fit_score, skill_score, exp_score, ed
         tier = "weak"
 
     # --- Opening sentence: overall verdict ---
-    if disqualified_by_critical_skills:
+    if disqualification_reason:
+        opening = (
+            f"This candidate is marked Not Qualified for the {job_title} role because "
+            f"{disqualification_reason}. The overall fit score remains {fit_score:.0f}% "
+            f"to reflect the weighted skills, experience, and education evidence separately from the rule outcome."
+        )
+    elif disqualified_by_critical_skills:
         missing_critical_text = ', '.join(missing_critical_skills) or "one or more critical skills"
         opening = (
             f"This candidate has been automatically disqualified for the {job_title} role "
-            f"because they are missing critical skill(s): {missing_critical_text}."
+            f"because they are missing critical skill(s): {missing_critical_text}. "
+            f"The overall fit score remains {fit_score:.0f}% to show the weighted evidence separately."
         )
     elif tier == "strong":
         opening = (
@@ -283,10 +291,10 @@ def generate_analysis_narrative(job_title, fit_score, skill_score, exp_score, ed
         )
 
     # --- Closing recommendation ---
-    if disqualified_by_critical_skills:
+    if disqualification_reason or disqualified_by_critical_skills:
         closing = (
-            "Recommendation: Do not advance. The candidate must demonstrate proficiency in the missing "
-            "critical skills before being reconsidered for this role."
+            "Recommendation: Do not advance unless the rule-triggering gap is resolved or verified differently "
+            "during human review."
         )
     elif tier == "strong":
         closing = (
@@ -704,24 +712,24 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
     # 9. Recommendation & Critical Skill Enforcement
     label = generate_recommendation(fit_score, min_fit_score)
     disqualified_by_critical_skills = False
+    disqualification_reason = None
 
     if requires_all_critical and missing_critical_skills:
         label = "Not Qualified"
-        # Force the score to be below the min fit score
-        fit_score = min(fit_score, min_fit_score - 1.0)
         disqualified_by_critical_skills = True
+        missing_critical_text = ', '.join(missing_critical_skills)
+        disqualification_reason = f"the resume is missing required critical skill(s): {missing_critical_text}"
     elif required_skills and len(matched_skills) == 0:
         label = "Not Qualified"
-        fit_score = min(fit_score, min_fit_score - 1.0)
+        disqualification_reason = "none of the configured required skills were found in the resume"
     elif required_skills and required_skill_score < 50.0:
         label = "Not Qualified"
-        fit_score = min(fit_score, min_fit_score - 1.0)
+        disqualification_reason = "less than half of the configured required skills were found in the resume"
     elif experience_req and experience_req > 0 and exp_score < 50.0:
         label = "Not Qualified"
-        fit_score = min(fit_score, min_fit_score - 1.0)
+        disqualification_reason = "the detected work experience is far below the configured minimum requirement"
     elif experience_req and experience_req > 0 and exp_score < 100.0 and label == "Qualified":
         label = "For Review"
-        fit_score = min(fit_score, 74.0)
 
     # 9. Generate Unique Candidate-Specific Narrative
     summary = generate_analysis_narrative(
@@ -740,7 +748,8 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         matched_preferred=matched_preferred,
         preferred_bonus=preferred_bonus,
         matched_critical_skills=matched_critical_skills,
-        missing_critical_skills=missing_critical_skills
+        missing_critical_skills=missing_critical_skills,
+        disqualification_reason=disqualification_reason
     )
     decision_explanation = generate_decision_explanation(
         job_title=job_title,

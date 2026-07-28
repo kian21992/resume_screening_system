@@ -6,7 +6,7 @@
     <title>{% block title %}Automated Resume Screening System{% endblock %} | ARSS</title>
     
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -28,24 +28,25 @@
     <nav class="navbar navbar-expand-lg navbar-dark navbar-custom sticky-top">
         <div class="container-fluid">
             <a class="navbar-brand" href="{{ url_for('dashboard.dashboard') }}">
-                <i class="bi bi-robot"></i> ARSS
+                <i class="bi bi-folder2-open"></i> ARSS
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('dashboard.dashboard') }}">Dashboard</a>
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('dashboard.') %}active{% endif %}" href="{{ url_for('dashboard.dashboard') }}" {% if request.endpoint and request.endpoint.startswith('dashboard.') %}aria-current="page"{% endif %}>Dashboard</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('job.list_jobs') }}">Jobs</a>
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('job.') %}active{% endif %}" href="{{ url_for('job.list_jobs') }}" {% if request.endpoint and request.endpoint.startswith('job.') %}aria-current="page"{% endif %}>Jobs</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('resume.upload') }}">Upload Resumes</a>
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('resume.') %}active{% endif %}" href="{{ url_for('resume.upload') }}" {% if request.endpoint and request.endpoint.startswith('resume.') %}aria-current="page"{% endif %}>Upload Resumes</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('screening.screening_results') }}">Candidates</a>
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('screening.') %}active{% endif %}" href="{{ url_for('screening.screening_results') }}" {% if request.endpoint and request.endpoint.startswith('screening.') %}aria-current="page"{% endif %}>Candidates</a>
                     </li>
                 </ul>
                 <div class="d-flex">

@@ -31,14 +31,24 @@ def _apply_screening_filters(query, job_id=None, reviewer_status=''):
         query = query.filter_by(reviewer_status=reviewer_status)
     return query
 
-def _ordered_screening_results_query(job_id=None, reviewer_status=''):
-    query = _apply_screening_filters(ScreeningResult.query, job_id, reviewer_status)
-    if job_id or reviewer_status:
-        return query.order_by(ScreeningResult.fit_score.desc(), ScreeningResult.id.desc())
-    return query.order_by(ScreeningResult.id.desc())
+def _screening_sort_arg():
+    sort = (request.args.get('sort') or 'fit_desc').strip()
+    return sort if sort in {'fit_desc', 'fit_asc', 'newest', 'oldest'} else 'fit_desc'
 
-def _candidate_navigation(result_id, job_id=None, reviewer_status=''):
-    query = _ordered_screening_results_query(job_id, reviewer_status)
+def _screening_order_columns(sort):
+    return {
+        'fit_desc': (ScreeningResult.fit_score.desc(), ScreeningResult.id.desc()),
+        'fit_asc': (ScreeningResult.fit_score.asc(), ScreeningResult.id.desc()),
+        'newest': (ScreeningResult.screened_at.desc(), ScreeningResult.id.desc()),
+        'oldest': (ScreeningResult.screened_at.asc(), ScreeningResult.id.asc()),
+    }[sort]
+
+def _ordered_screening_results_query(job_id=None, reviewer_status='', sort='fit_desc'):
+    query = _apply_screening_filters(ScreeningResult.query, job_id, reviewer_status)
+    return query.order_by(*_screening_order_columns(sort))
+
+def _candidate_navigation(result_id, job_id=None, reviewer_status='', sort='fit_desc'):
+    query = _ordered_screening_results_query(job_id, reviewer_status, sort)
     if not job_id and not reviewer_status:
         query = query.limit(20)
     ordered_results = query.all()
@@ -56,9 +66,10 @@ def _candidate_navigation(result_id, job_id=None, reviewer_status=''):
 @login_required
 def screening_results():
     job_id, reviewer_status = _screening_filter_args()
+    sort = _screening_sort_arg()
     jobs = JobDescription.query.all()
 
-    query = _ordered_screening_results_query(job_id, reviewer_status)
+    query = _ordered_screening_results_query(job_id, reviewer_status, sort)
     results = query.all() if job_id or reviewer_status else query.limit(20).all()
         
     return render_template(
@@ -67,6 +78,7 @@ def screening_results():
         results=results,
         selected_job_id=job_id,
         selected_reviewer_status=reviewer_status,
+        selected_sort=sort,
         reviewer_statuses=ScreeningResult.REVIEW_STATUSES,
     )
 
@@ -74,6 +86,7 @@ def screening_results():
 @login_required
 def result_detail(result_id):
     job_id, reviewer_status = _screening_filter_args()
+    sort = _screening_sort_arg()
     result = ScreeningResult.query.get_or_404(result_id)
     applicant = Applicant.query.get(result.applicant_id)
     job = JobDescription.query.get(result.job_id)
@@ -82,6 +95,7 @@ def result_detail(result_id):
         result.id,
         job_id,
         reviewer_status,
+        sort,
     )
     
     # Query extracted metadata
@@ -120,7 +134,8 @@ def result_detail(result_id):
                            candidate_position=candidate_position,
                            candidate_total=candidate_total,
                            selected_job_id=job_id,
-                           selected_reviewer_status=reviewer_status)
+                           selected_reviewer_status=reviewer_status,
+                           selected_sort=sort)
 
 
 @screening_bp.route('/screening_results/<int:result_id>/review', methods=['POST'])

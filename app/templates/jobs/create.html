@@ -48,7 +48,7 @@
                         <textarea class="form-control" id="preferred_skills" name="preferred_skills" rows="2" placeholder="Please enter a text here"></textarea>
                     </div>
                     
-                    <h4 class="mb-4 mt-5 fw-bold text-white border-bottom border-secondary pb-2"><i class="bi bi-cpu text-primary me-2"></i>AI Screening Criteria</h4>
+                    <h4 class="mb-4 mt-5 fw-bold text-white border-bottom border-secondary pb-2"><i class="bi bi-sliders text-primary me-2"></i>Screening Criteria</h4>
                     
                     <div class="row align-items-center">
                         <div class="col-md-6 mb-3">
@@ -57,7 +57,7 @@
                             <div class="form-text text-muted mt-1"><i class="bi bi-shield-exclamation"></i> Candidates below this score will be auto-marked "Not Qualified".</div>
                         </div>
                         <div class="col-md-6 mb-3 d-flex align-items-center mt-md-3">
-                            <div class="form-check form-switch p-3 rounded border border-secondary" style="background: rgba(255,255,255,0.01); width: 100%;">
+                            <div class="form-check form-switch p-3 rounded border border-secondary" style="background: #f8fafc; width: 100%;">
                                 <input class="form-check-input ms-0 me-3" type="checkbox" role="switch" id="requires_all_critical" name="requires_all_critical" checked>
                                 <label class="form-check-label text-light fw-semibold" for="requires_all_critical">Enforce Critical Skills</label>
                             </div>
@@ -65,7 +65,7 @@
                     </div>
 
                     <div class="d-grid mt-5">
-                        <button type="submit" class="btn btn-primary py-3 fs-5"><i class="bi bi-rocket-takeoff-fill me-2"></i>Publish Job & Initialize Engine</button>
+                        <button type="submit" class="btn btn-primary py-3 fs-5"><i class="bi bi-check2-square me-2"></i>Save Job Listing</button>
                     </div>
                 </form>
             </div>
@@ -76,7 +76,7 @@
         <div class="glass-panel p-4 sticky-top shadow-sm" style="top: 100px;">
             <h5 class="fw-bold border-bottom border-secondary pb-2 text-white"><i class="bi bi-lightbulb-fill text-warning me-2"></i>How it works</h5>
             <p class="text-muted small mt-3 leading-relaxed">
-                The AI Screening Engine uses Natural Language Processing to extract candidates' skills and match them against your job requirements.
+                The screening process extracts resume details and compares them with the requirements configured for this job.
             </p>
             <ul class="text-muted small ps-3 mt-3">
                 <li class="mb-2"><strong>Required Skills</strong> heavily impact the Fit Score. Be specific.</li>

@@ -1,15 +1,15 @@
 {% extends 'base.html' %}
-{% block title %}AI Analysis | Candidate #{{ applicant.id }}{% endblock %}
+{% block title %}Candidate Review | Candidate #{{ applicant.id }}{% endblock %}
 
 {% block content %}
-<div class="mb-4 d-flex align-items-center justify-content-between">
+<div class="page-toolbar">
     <div class="d-flex align-items-center">
-        <a href="{{ url_for('screening.screening_results', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" class="btn btn-sm btn-outline-light me-3"><i
+        <a href="{{ url_for('screening.screening_results', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None, sort=selected_sort) }}" class="btn btn-sm btn-outline-light me-3"><i
                 class="bi bi-arrow-left"></i> Rankings</a>
-        <h1 class="mb-0">Candidate Analysis</h1>
+        <h1 class="mb-0">Candidate Review</h1>
     </div>
 
-    <div class="d-flex flex-wrap align-items-center justify-content-end gap-2">
+    <div class="toolbar-actions">
         {% if result.recommendation_label == 'Qualified' %}
         <span class="badge badge-qualified px-4 py-2 fs-5 rounded-pill"><i class="bi bi-check-circle me-2"></i>
             Qualified</span>
@@ -32,11 +32,39 @@
     </div>
 </div>
 
+<section class="decision-summary mb-4" aria-labelledby="decision-summary-title">
+    <div class="decision-summary-score">
+        <span class="decision-eyebrow">Evidence score</span>
+        <strong>{{ result.fit_score | round(1) }}%</strong>
+        <span>Weighted skills, experience, and education evidence</span>
+    </div>
+    <div class="decision-summary-outcome">
+        <span class="decision-eyebrow" id="decision-summary-title">System decision</span>
+        <strong>{{ result.recommendation_label }}</strong>
+        {% if result.recommendation_label == 'Not Qualified' and result.get_missing_critical_skills() %}
+        <span><i class="bi bi-shield-exclamation me-1"></i>Missing critical: {{ result.get_missing_critical_skills() | join(', ') }}</span>
+        {% elif result.recommendation_label == 'Not Qualified' and result.fit_score >= 50 %}
+        <span><i class="bi bi-shield-exclamation me-1"></i>A qualification rule overrides the numerical score.</span>
+        {% else %}
+        <span>The decision combines the evidence score with configured screening rules.</span>
+        {% endif %}
+    </div>
+</section>
+
+<nav class="review-section-nav mb-4" aria-label="Candidate review sections">
+    <a href="#candidate-overview">Overview</a>
+    <a href="#screening-analysis">Analysis</a>
+    <a href="#skill-breakdown">Skills</a>
+    <a href="#score-breakdown">Scoring</a>
+    <a href="#work-experience">Experience</a>
+    <a href="#education-history">Education</a>
+</nav>
+
 <div class="row g-4 animate-fade-in">
     <!-- Left Column: Scores & Extracted Data -->
     <div class="col-lg-4">
         <!-- Fit Score Card -->
-        <div class="glass-panel p-4 mb-4 text-center shadow-sm">
+        <div class="glass-panel p-4 mb-4 text-center shadow-sm" id="candidate-overview">
             <div class="card-body">
                 <h5 class="text-muted fw-bold mb-4">Overall Fit Score</h5>
                 <div class="position-relative d-inline-block">
@@ -184,25 +212,25 @@
         </div>
     </div>
 
-    <!-- Right Column: AI Analysis -->
+    <!-- Right Column: Screening Details -->
     <div class="col-lg-8">
         <div class="glass-panel p-4 shadow-sm h-100">
             <div class="card-body">
-                <h4 class="mb-4 fw-bold text-white border-bottom border-secondary pb-3"><i
-                        class="bi bi-cpu text-primary me-2"></i>AI Analysis & Fit Rating</h4>
+                <h4 id="screening-analysis" class="mb-4 fw-bold text-white border-bottom border-secondary pb-3"><i
+                        class="bi bi-clipboard2-data text-primary me-2"></i>Screening Summary</h4>
                 {# Split narrative into sentences for better readability #}
                 {% set sentences = result.summary.split('. ') %}
                 <div class="analysis-narrative mb-5" style="
-                    background: linear-gradient(135deg, rgba(99,102,241,0.06), rgba(16,185,129,0.04));
+                    background: #f8fafc;
                     border: 1px solid rgba(99,102,241,0.2);
                     border-radius: 12px;
                     padding: 1.5rem 1.75rem;">
                     <div class="d-flex align-items-center gap-2 mb-3">
                         <span
-                            style="background: linear-gradient(135deg,#6366f1,#818cf8); width:32px; height:32px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                            <i class="bi bi-stars text-white" style="font-size:0.9rem;"></i>
+                            style="background: #eef3f8; width:32px; height:32px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                            <i class="bi bi-card-checklist text-primary" style="font-size:0.9rem;"></i>
                         </span>
-                        <span class="fw-bold text-white" style="font-size:0.95rem; letter-spacing:0.01em;">Candidate Insight</span>
+                        <span class="fw-bold text-white" style="font-size:0.95rem; letter-spacing:0.01em;">Candidate Summary</span>
                     </div>
                     <div class="narrative-lines" style="display:flex; flex-direction:column; gap:0.65rem;">
                         {% for sentence in sentences %}
@@ -210,15 +238,15 @@
                         <p class="mb-0 text-light"
                             style="font-size:0.95rem; line-height:1.7; padding: 0.5rem 0.75rem; border-radius: 8px; background: rgba(255,255,255,0.025);">
                             {% if loop.first %}
-                            <i class="bi bi-arrow-right-circle-fill me-2" style="color:#818cf8; font-size:0.85rem;"></i>
+                            <i class="bi bi-arrow-right-circle-fill me-2 text-primary" style="font-size:0.85rem;"></i>
                             {% elif 'Recommendation:' in sentence %}
-                            <i class="bi bi-lightbulb-fill me-2" style="color:#fbbf24; font-size:0.85rem;"></i>
+                            <i class="bi bi-lightbulb-fill me-2 text-warning" style="font-size:0.85rem;"></i>
                             {% elif 'missing' in sentence.lower() or 'does not meet' in sentence.lower() or 'falls
                             short' in sentence.lower() or 'no verifiable' in sentence.lower() %}
                             <i class="bi bi-exclamation-triangle-fill me-2"
-                                style="color:#f43f5e; font-size:0.85rem;"></i>
+                                style="font-size:0.85rem;"></i>
                             {% else %}
-                            <i class="bi bi-check2-circle me-2" style="color:#10b981; font-size:0.85rem;"></i>
+                            <i class="bi bi-check2-circle me-2 text-success" style="font-size:0.85rem;"></i>
                             {% endif %}
                             {{ sentence.strip() }}{% if not sentence.strip().endswith('.') %}.{% endif %}
                         </p>
@@ -328,10 +356,10 @@
                     style="background: rgba(255, 255, 255, 0.015); border: 1px solid rgba(255, 255, 255, 0.06);">
                     <div class="d-flex align-items-center gap-2 mb-3">
                         <span
-                            style="background: rgba(20,184,166,0.16); width:32px; height:32px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                            <i class="bi bi-clipboard2-check text-info" style="font-size:0.95rem;"></i>
+                            style="background: #eef3f8; width:32px; height:32px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                            <i class="bi bi-clipboard2-check text-primary" style="font-size:0.95rem;"></i>
                         </span>
-                        <span class="fw-bold text-white" style="font-size:0.95rem;">Qualification Decision Explanation</span>
+                        <span class="fw-bold text-white" style="font-size:0.95rem;">Qualification Decision</span>
                     </div>
                     {% for paragraph in result.decision_explanation.split('\n\n') %}
                     {% if paragraph.strip() %}
@@ -344,7 +372,7 @@
                 {% endif %}
 
 
-                <h5 class="mb-4 fw-bold text-white"><i class="bi bi-tags text-primary me-2"></i>Skill Matching Breakdown
+                <h5 id="skill-breakdown" class="mb-4 fw-bold text-white"><i class="bi bi-tags text-primary me-2"></i>Skill Matching Breakdown
                 </h5>
 
                 {% set matched_critical = result.get_matched_critical_skills() %}
@@ -378,7 +406,7 @@
                                     style="font-size: 0.8rem;">{{ skill }}</span>
                                 {% else %}
                                 <span
-                                    class="text-white bg-success bg-opacity-25 border border-success rounded-pill px-3 py-2 small fw-semibold">All
+                                    class="text-success bg-success bg-opacity-25 border border-success rounded-pill px-3 py-2 small fw-semibold">All
                                     critical skills matched!</span>
                                 {% endfor %}
                             </div>
@@ -418,7 +446,7 @@
                                     style="font-size: 0.8rem;">{{ skill }}</span>
                                 {% else %}
                                 <span
-                                    class="text-white bg-success bg-opacity-25 border border-success rounded-pill px-3 py-2 small fw-semibold">All
+                                    class="text-success bg-success bg-opacity-25 border border-success rounded-pill px-3 py-2 small fw-semibold">All
                                     required skills matched!</span>
                                 {% endfor %}
                             </div>
@@ -426,7 +454,7 @@
                     </div>
                 </div>
 
-                <h5 class="mb-4 fw-bold text-white"><i class="bi bi-bar-chart-steps text-primary me-2"></i>Scoring
+                <h5 id="score-breakdown" class="mb-4 fw-bold text-white"><i class="bi bi-bar-chart-steps text-primary me-2"></i>Scoring
                     Criteria Weights</h5>
                 <div class="mb-4 p-3 rounded-3"
                     style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.03);">
@@ -449,8 +477,8 @@
                         <span class="fw-bold text-white">{{ result.experience_score | int }}%</span>
                     </div>
                     <div class="progress" style="height: 8px;">
-                        <div class="progress-bar"
-                            style="width: {{ result.experience_score }}%; background: linear-gradient(90deg, #06b6d4, #0891b2);">
+                        <div class="progress-bar bg-info"
+                            style="width: {{ result.experience_score }}%;">
                         </div>
                     </div>
                 </div>
@@ -464,7 +492,7 @@
                     </div>
                     <div class="progress" style="height: 8px;">
                         <div class="progress-bar"
-                            style="width: {{ result.education_score }}%; background: linear-gradient(90deg, #a855f7, #9333ea);">
+                            style="width: {{ result.education_score }}%; background: var(--secondary-color);">
                         </div>
                     </div>
                 </div>
@@ -479,13 +507,13 @@
                     </div>
                     <div class="progress" style="height: 8px;">
                         <div class="progress-bar"
-                            style="width: {{ result.text_similarity_score }}%; background: linear-gradient(90deg, #14b8a6, #0f766e);">
+                            style="width: {{ result.text_similarity_score }}%; background: var(--info);">
                         </div>
                     </div>
                 </div>
                 {% endif %}
 
-                <h5 class="mb-4 mt-5 fw-bold text-white"><i class="bi bi-briefcase text-primary me-2"></i>Extracted Work
+                <h5 id="work-experience" class="mb-4 mt-5 fw-bold text-white"><i class="bi bi-briefcase text-primary me-2"></i>Extracted Work
                     Experience History</h5>
                 <div class="table-responsive mb-5">
                     <table class="table align-middle">
@@ -523,7 +551,7 @@
                     </table>
                 </div>
 
-                <h5 class="mb-4 fw-bold text-white"><i class="bi bi-mortarboard text-primary me-2"></i>Extracted
+                <h5 id="education-history" class="mb-4 fw-bold text-white"><i class="bi bi-mortarboard text-primary me-2"></i>Extracted
                     Education History</h5>
                 <div class="table-responsive">
                     <table class="table align-middle">
@@ -559,9 +587,9 @@
 
 <div class="glass-panel p-3 mt-4 shadow-sm d-flex flex-column flex-md-row align-items-stretch align-items-md-center justify-content-between gap-3"
     style="position: sticky; bottom: 1rem; z-index: 20; border: 1px solid rgba(99,102,241,0.28);">
-    <div class="d-flex flex-column flex-sm-row gap-2">
+    <div class="toolbar-actions">
         {% if previous_result %}
-        <a href="{{ url_for('screening.result_detail', result_id=previous_result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}"
+        <a href="{{ url_for('screening.result_detail', result_id=previous_result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None, sort=selected_sort) }}"
             class="btn btn-outline-light">
             <i class="bi bi-arrow-left me-2"></i>Previous
         </a>
@@ -572,7 +600,7 @@
         {% endif %}
 
         {% if next_result %}
-        <a href="{{ url_for('screening.result_detail', result_id=next_result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}"
+        <a href="{{ url_for('screening.result_detail', result_id=next_result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None, sort=selected_sort) }}"
             class="btn btn-primary">
             Next Candidate<i class="bi bi-arrow-right ms-2"></i>
         </a>
@@ -583,13 +611,13 @@
         {% endif %}
     </div>
 
-    <div class="d-flex flex-column flex-sm-row align-items-stretch align-items-sm-center gap-3">
+    <div class="toolbar-actions">
         {% if candidate_position and candidate_total %}
         <span class="text-light small text-center text-sm-start">
             Candidate {{ candidate_position }} of {{ candidate_total }}
         </span>
         {% endif %}
-        <a href="{{ url_for('screening.screening_results', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}"
+        <a href="{{ url_for('screening.screening_results', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None, sort=selected_sort) }}"
             class="btn btn-outline-light">
             <i class="bi bi-list-ul me-2"></i>Back to Rankings
         </a>

@@ -1299,8 +1299,9 @@ class TestEvaluateCandidate(unittest.TestCase):
             requires_all_critical=True,
         )
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertLess(result["fit_score"], 50.0)
+        self.assertEqual(result["fit_score"], 100.0)
         self.assertEqual(sorted(result["missing_critical_skills"]), sorted(["COBOL", "Fortran"]))
+        self.assertIn("fit score remains 100%", result["summary"])
 
     def test_missing_required_skills_do_not_force_disqualification_without_critical_list(self):
         result = self._run(
@@ -1333,7 +1334,7 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertEqual(result["matched_skills"], [])
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertLess(result["fit_score"], 50.0)
+        self.assertEqual(result["fit_score"], 50.0)
 
     def test_missing_more_than_half_required_skills_is_not_qualified(self):
         result = self._run(
@@ -1343,7 +1344,7 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertEqual(result["matched_skills"], ["Python"])
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertLess(result["fit_score"], 50.0)
+        self.assertEqual(result["fit_score"], 67.5)
 
     def test_severe_experience_gap_is_not_qualified(self):
         result = self._run(
@@ -1352,9 +1353,9 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertLess(result["experience_score"], 50.0)
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertLess(result["fit_score"], 50.0)
+        self.assertGreater(result["fit_score"], 75.0)
 
-    def test_partial_experience_gap_caps_candidate_at_for_review(self):
+    def test_partial_experience_gap_routes_candidate_to_review_without_changing_score(self):
         result = self._run(
             experience_req=6,
             min_fit_score=50.0,
@@ -1362,7 +1363,7 @@ class TestEvaluateCandidate(unittest.TestCase):
         self.assertGreaterEqual(result["experience_score"], 50.0)
         self.assertLess(result["experience_score"], 100.0)
         self.assertEqual(result["recommendation_label"], "For Review")
-        self.assertLess(result["fit_score"], 75.0)
+        self.assertGreater(result["fit_score"], 75.0)
 
     # --- preferred skills bonus ---
 
