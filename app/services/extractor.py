@@ -19,7 +19,9 @@ def _extract_pdf_pdfplumber(filepath):
     with pdfplumber.open(filepath) as pdf:
         for page in pdf.pages:
             # extract_text with layout=True tries to preserve visual order
-            page_text = page.extract_text(layout=False, x_tolerance=3, y_tolerance=3)
+            # A small x tolerance is important for tightly kerned/template-based
+            # resumes; larger values concatenate words ("DevelopLessonPlans").
+            page_text = page.extract_text(layout=False, x_tolerance=1, y_tolerance=3)
             if page_text:
                 pages_text.append(page_text.strip())
 

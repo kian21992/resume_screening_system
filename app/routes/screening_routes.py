@@ -6,7 +6,8 @@ from flask_login import current_user, login_required
 from app import db
 from app.models import (
     JobDescription, ScreeningResult, Applicant, Resume,
-    ExtractedEducation, ExtractedExperience, ExtractedSkill, RecommendationLog
+    ExtractedEducation, ExtractedExperience, ExtractedSkill, ExtractedCertification,
+    RecommendationLog
 )
 from app.services.evidence import build_candidate_evidence
 from app.services.recommender import analyze_preferred_skills
@@ -101,6 +102,7 @@ def result_detail(result_id):
     # Query extracted metadata
     education = ExtractedEducation.query.filter_by(resume_id=resume.id).all()
     experience = ExtractedExperience.query.filter_by(resume_id=resume.id).all()
+    certifications = ExtractedCertification.query.filter_by(resume_id=resume.id).all()
     preferred_skills = [
         skill.strip() for skill in (job.preferred_skills or '').split(',')
         if skill.strip()
@@ -128,6 +130,7 @@ def result_detail(result_id):
                            resume=resume,
                            education=education,
                            experience=experience,
+                           certifications=certifications,
                            candidate_evidence=candidate_evidence,
                            previous_result=previous_result,
                            next_result=next_result,
@@ -199,6 +202,7 @@ def delete_candidate(result_id):
         ExtractedSkill.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
         ExtractedEducation.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
         ExtractedExperience.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
+        ExtractedCertification.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
         
         # 4. Delete Resume DB record
         db.session.delete(resume)
@@ -255,6 +259,7 @@ def delete_all_candidates():
         ExtractedSkill.query.filter(ExtractedSkill.resume_id.in_(resume_ids)).delete(synchronize_session=False)
         ExtractedEducation.query.filter(ExtractedEducation.resume_id.in_(resume_ids)).delete(synchronize_session=False)
         ExtractedExperience.query.filter(ExtractedExperience.resume_id.in_(resume_ids)).delete(synchronize_session=False)
+        ExtractedCertification.query.filter(ExtractedCertification.resume_id.in_(resume_ids)).delete(synchronize_session=False)
         
     # 4. Delete files
     for r in resumes:

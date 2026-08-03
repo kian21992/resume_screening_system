@@ -78,6 +78,15 @@ class ExtractedExperience(db.Model):
     location = db.Column(db.String(255), nullable=True)
     years = db.Column(db.Float, nullable=True)
 
+class ExtractedCertification(db.Model):
+    __tablename__ = 'extracted_certifications'
+    id = db.Column(db.Integer, primary_key=True)
+    resume_id = db.Column(db.Integer, db.ForeignKey('resumes.id'), nullable=False)
+    certification_name = db.Column(db.String(255), nullable=False)
+    credential_type = db.Column(db.String(50), nullable=False, default='Certification')
+    issuer = db.Column(db.String(255), nullable=True)
+    date_obtained = db.Column(db.String(100), nullable=True)
+
 class ScreeningResult(db.Model):
     __tablename__ = 'screening_results'
     REVIEW_STATUSES = (

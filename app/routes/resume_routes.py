@@ -7,7 +7,8 @@ from flask_login import current_user, login_required
 from app import db
 from app.models import (
     JobDescription, Applicant, Resume, ScreeningResult, RecommendationLog,
-    ScreeningCriteria, ExtractedSkill, ExtractedEducation, ExtractedExperience
+    ScreeningCriteria, ExtractedSkill, ExtractedEducation, ExtractedExperience,
+    ExtractedCertification
 )
 from app.services.extractor import extract_text_from_file
 from app.services.recommender import evaluate_candidate
@@ -256,6 +257,15 @@ def process_resume_file(file, job):
                 company=exp['company'],
                 location=exp.get('location'),
                 years=exp['years']
+            ))
+
+        for credential in evaluation['extracted_certifications']:
+            db.session.add(ExtractedCertification(
+                resume_id=resume.id,
+                certification_name=credential['certification_name'],
+                credential_type=credential['credential_type'],
+                issuer=credential.get('issuer'),
+                date_obtained=credential.get('date_obtained')
             ))
 
         result = ScreeningResult(

@@ -58,6 +58,7 @@
     <a href="#score-breakdown">Scoring</a>
     <a href="#work-experience">Experience</a>
     <a href="#education-history">Education</a>
+    <a href="#certifications">Licenses & Certifications</a>
 </nav>
 
 <div class="row g-4 animate-fade-in">
@@ -575,6 +576,23 @@
                             <tr>
                                 <td colspan="2" class="text-muted text-center py-3">No education records extracted.</td>
                             </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <h5 id="certifications" class="mb-4 mt-5 fw-bold text-white"><i class="bi bi-patch-check text-primary me-2"></i>Licenses &amp; Certifications</h5>
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle">
+                        <thead><tr><th>Credential</th><th>Type</th></tr></thead>
+                        <tbody>
+                            {% for credential in certifications %}
+                            <tr>
+                                <td>{{ credential.certification_name }}</td>
+                                <td>{{ credential.credential_type }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="2" class="text-muted text-center py-3">No licenses or certifications extracted.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>

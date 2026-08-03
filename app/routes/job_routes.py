@@ -6,7 +6,7 @@ from app import db
 from app.models import (
     JobDescription, ScreeningCriteria, Applicant, Resume,
     ScreeningResult, RecommendationLog, ExtractedSkill,
-    ExtractedEducation, ExtractedExperience
+    ExtractedEducation, ExtractedExperience, ExtractedCertification
 )
 from app.utils.files import safe_delete_uploaded_file
 
@@ -142,6 +142,7 @@ def delete_job(job_id):
         ExtractedSkill.query.filter(ExtractedSkill.resume_id.in_(resume_ids)).delete(synchronize_session=False)
         ExtractedEducation.query.filter(ExtractedEducation.resume_id.in_(resume_ids)).delete(synchronize_session=False)
         ExtractedExperience.query.filter(ExtractedExperience.resume_id.in_(resume_ids)).delete(synchronize_session=False)
+        ExtractedCertification.query.filter(ExtractedCertification.resume_id.in_(resume_ids)).delete(synchronize_session=False)
         
     # 6. Delete physical resume files from disk
     for r in resumes:

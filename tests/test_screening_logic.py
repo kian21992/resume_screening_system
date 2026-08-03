@@ -1619,5 +1619,77 @@ class TestSkillAliasesTable(unittest.TestCase):
 # Entry point
 # ===========================================================================
 
+class TestCertificationExtraction(unittest.TestCase):
+    def setUp(self):
+        from app.services.nlp_pipeline import extract_certifications
+        self.extract = extract_certifications
+
+    def test_extracts_board_and_professional_credentials(self):
+        text = (
+            "CARL ANDREI D. MANALANG, RPm, CPHR\n"
+            "Registered Psychometrician  August 2024"
+        )
+        records = self.extract(text)
+        by_name = {record['certification_name']: record for record in records}
+        self.assertEqual(by_name['Registered Psychometrician']['date_obtained'], 'August 2024')
+        self.assertIn('Certified Professional in Human Resources (CPHR)', by_name)
+
+    def test_normalizes_lpt_and_concatenated_let_passer(self):
+        records = self.extract(
+            "LicensedProfessionalTeacher\n(LETPasser)\nNovember2021"
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['certification_name'], 'Licensed Professional Teacher')
+        self.assertEqual(records[0]['date_obtained'], 'November2021')
+
+    def test_does_not_invent_credential(self):
+        self.assertEqual(
+            self.extract('Bachelor of Secondary Education major in English'),
+            []
+        )
+
+
+class TestLocalResumeExtractionRegressions(unittest.TestCase):
+    def test_deans_lister_is_never_work_experience(self):
+        text = """ACHIEVEMENTS
+DEAN'S LISTER
+College of Education
+Academic Years 2020-2024
+WORK EXPERIENCES
+Faculty Member (Teacher)
+Holy Child of Mary College Inc.
+(S.Y. 2024 - 2025)
+SEMINARS"""
+        records = extract_experience_records(text)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['job_title'], 'Faculty Member (Teacher)')
+        self.assertNotIn("LISTER", records[0]['job_title'].upper())
+
+    def test_title_and_company_are_not_reversed(self):
+        text = """EXPERIENCE
+Infant Jesus Academy - Pampanga  City of San Fernando, Pampanga
+Human Resource Management & Development Assistant  July 2024 - Present
+SKILLS"""
+        record = extract_experience_records(text)[0]
+        self.assertEqual(record['job_title'], 'Human Resource Management & Development Assistant')
+        self.assertEqual(record['company'], 'Infant Jesus Academy - Pampanga')
+
+    def test_overlapping_roles_are_not_double_counted(self):
+        text = """EXPERIENCE
+School One
+Human Resources Assistant  July 2024 - Present
+Freelance
+Research Validator  August 2024 - Present
+SKILLS"""
+        self.assertLessEqual(extract_years_of_experience(text), 2.2)
+
+    def test_teaching_skill_wording_variants_match(self):
+        matched, missing = analyze_skills(
+            'Designs engaging lesson plans. Implements strong classroom management strategies.',
+            ['Lesson Planning', 'Classroom Management'],
+        )
+        self.assertEqual(matched, ['Lesson Planning', 'Classroom Management'])
+        self.assertEqual(missing, [])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

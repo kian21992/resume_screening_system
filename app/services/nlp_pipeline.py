@@ -52,7 +52,7 @@ NAME_NOISE_RE = re.compile(
 NAME_PARTICLES = {'de', 'del', 'di', 'da', 'dos', 'das', 'van', 'von', 'la', 'le', 'du', 'bin'}
 NAME_PREFIXES = {'mr', 'mrs', 'ms', 'miss', 'dr', 'engr', 'prof', 'atty'}
 NAME_SUFFIXES = {'jr', 'sr', 'ii', 'iii', 'iv', 'v'}
-NAME_CREDENTIALS = {'cpa', 'rn', 'lpt', 'pmp', 'phd', 'md', 'mba', 'csc'}
+NAME_CREDENTIALS = {'cpa', 'rn', 'lpt', 'rpm', 'cphr', 'pmp', 'phd', 'md', 'mba', 'csc'}
 EMAIL_NAME_NOISE = {
     'admin', 'applicant', 'application', 'career', 'contact', 'cv', 'email',
     'hello', 'hr', 'info', 'jobs', 'mail', 'office', 'recruitment', 'resume',
@@ -123,6 +123,88 @@ def extract_skills(text, predefined_skills=None):
             
     return extracted
 
+
+def extract_certifications(text):
+    """Extract professional certifications, licenses, and board-exam credentials."""
+    if not text:
+        return []
+
+    month = (r'(?:January|February|March|April|May|June|July|August|September|'
+             r'October|November|December)')
+    date_re = re.compile(rf'\b(?:{month}\s*)?(?:19|20)\d{{2}}\b', re.IGNORECASE)
+    lines = [re.sub(r'\s+', ' ', line).strip() for line in text.splitlines() if line.strip()]
+    records = []
+
+    def add(name, credential_type='Certification', date=None, issuer=None):
+        name = re.sub(r'\s+', ' ', name or '').strip(' .,:;|-')
+        if not name:
+            return
+        key = re.sub(r'[^a-z0-9]+', '', name.lower())
+        aliases = {
+            'lpt': 'licensedprofessionalteacher',
+            'letpasser': 'licensedprofessionalteacher',
+            'licensedprofessionalteacherletpasser': 'licensedprofessionalteacher',
+            'rpm': 'registeredpsychometrician',
+        }
+        key = aliases.get(key, key)
+        for existing in records:
+            existing_key = re.sub(r'[^a-z0-9]+', '', existing['certification_name'].lower())
+            existing_key = aliases.get(existing_key, existing_key)
+            if existing_key == key:
+                if date and not existing['date_obtained']:
+                    existing['date_obtained'] = date
+                if issuer and not existing['issuer']:
+                    existing['issuer'] = issuer
+                return
+        records.append({
+            'certification_name': name,
+            'credential_type': credential_type,
+            'issuer': issuer,
+            'date_obtained': date,
+        })
+
+    joined = '\n'.join(lines)
+
+    # Common regulated Philippine credentials and their resume abbreviations.
+    known = [
+        (r'\bRegistered\s+Psychometrician\b|\bRPm\b', 'Registered Psychometrician', 'Professional License'),
+        (r'\bLicensed\s+Professional\s+Teacher\b|\bLET\s*Passer\b|\bLPT\b', 'Licensed Professional Teacher', 'Professional License'),
+        (r'\bCertified\s+Professional\s+in\s+Human\s+Resources\b|\bCPHR\b', 'Certified Professional in Human Resources (CPHR)', 'Certification'),
+        (r'\bRegistered\s+Nurse\b|\bRN\b', 'Registered Nurse', 'Professional License'),
+        (r'\bCertified\s+Public\s+Accountant\b|\bCPA\b', 'Certified Public Accountant', 'Professional License'),
+        (r'\bRegistered\s+Criminologist\b|\bRCRIM\b', 'Registered Criminologist', 'Professional License'),
+        (r'\bCivil\s+Service\s+(?:Professional\s+)?Eligible\b|\bCSE\s+Passer\b', 'Civil Service Eligibility', 'Eligibility'),
+    ]
+    for pattern, canonical, kind in known:
+        for index, line in enumerate(lines):
+            if re.search(pattern, line, re.IGNORECASE):
+                date_match = date_re.search(line)
+                if not date_match and index + 1 < len(lines):
+                    next_date = date_re.fullmatch(lines[index + 1].strip(' ()'))
+                    date_match = next_date
+                add(canonical, kind, date_match.group(0) if date_match else None)
+
+    # Preserve explicitly named certifications not covered by the aliases above.
+    section_active = False
+    for index, line in enumerate(lines):
+        if re.fullmatch(r'(?:professional\s+)?(?:certifications?|licenses?|licensure|eligibility)', line, re.IGNORECASE):
+            section_active = True
+            continue
+        if section_active and RESUME_SECTION_RE.match(line):
+            section_active = False
+        explicit = re.search(
+            r'(?i)\b((?:certified|certification\s+(?:in|on)|licensed|registered)\s+'
+            r'[A-Za-z][A-Za-z0-9 &/+.#-]{2,80})', line
+        )
+        if explicit or (section_active and len(line) <= 120):
+            candidate = explicit.group(1) if explicit else line
+            date_match = date_re.search(candidate)
+            candidate = date_re.sub('', candidate).strip(' .,:;|-()')
+            if not re.fullmatch(r'(?i)(certifications?|licenses?|licensure|eligibility)', candidate):
+                add(candidate, 'Professional License' if re.search(r'(?i)licensed|registered|board|passer', candidate) else 'Certification', date_match.group(0) if date_match else None)
+
+    return records
+
 def extract_contact_info(text):
     """
     Extracts name, email, and phone number from resume text. Candidate names
@@ -149,8 +231,8 @@ def extract_contact_info(text):
         if words and words[0].lower().rstrip('.') in NAME_PREFIXES:
             value = ' '.join(words[1:])
         comma_parts = [part.strip() for part in value.split(',')]
-        if len(comma_parts) > 2 and comma_parts[-1].lower().rstrip('.') in NAME_CREDENTIALS:
-            comma_parts = comma_parts[:-1]
+        while len(comma_parts) > 1 and comma_parts[-1].lower().rstrip('.') in NAME_CREDENTIALS:
+            comma_parts.pop()
         if len(comma_parts) == 2:
             right_token = comma_parts[1].lower().rstrip('.')
             if right_token in NAME_CREDENTIALS:
@@ -429,8 +511,9 @@ def extract_education(text):
         r'^\s*(experience|professional\s+experience|employment|work\s*history|skills?'
         r'|technical\s+skills|certifications?|professional\s+(?:training|certifications?)'
         r'|professional\s+training\s+and\s+certifications?'
-        r'|projects?|awards?|interests?|references?|languages?|publications?'
-        r'|summary|objective|profile|activities)\s*:?\s*$',
+        r'|projects?|awards?|achievements?|interests?|references?|languages?|publications?'
+        r'|summary|objective|profile|activities|affiliations?|seminars?(?:\s+and\s+trainings?)?'
+        r'|personal\s+(?:information|data)|(?:(?:teaching|professional|work)\s+)?experiences?)\s*:?\s*$',
         re.IGNORECASE
     )
 
@@ -444,6 +527,11 @@ def extract_education(text):
                 edu_lines.append('')   # preserve blank line as context
             continue
         header_match = EDU_SECTION_HEADERS.match(line)
+        if not header_match and re.match(r'^education\b', line, re.IGNORECASE):
+            # Two-column PDFs may append text from the other column to a
+            # section heading (for example, "EDUCATION students, foster...").
+            in_edu_section = True
+            continue
         if header_match:
             in_edu_section = True
             inline_content = header_match.group('content').strip()
@@ -506,7 +594,7 @@ def extract_education(text):
     # ------------------------------------------------------------------
     INSTITUTION_RE = re.compile(
         r'((?:(?:[A-Z][A-Za-z&.\'-]*|of|the)\s+){0,7}'
-        r'(?:University|College|Institute|School|Academy|Polytechnic)'
+        r'(?:University|College|Colegio|Institute|School|Academy|Polytechnic)'
         r'(?:\s+(?:[A-Z][A-Za-z&.\'-]*|of|the)){0,4})'
     )
     # Strings that are definitely not school names
@@ -527,7 +615,7 @@ def extract_education(text):
     def _extract_institution(line_text, allow_org_fallback=True):
         """Try to pull a school name from a single line."""
         labelled = re.match(
-            r'^\s*(?:school|institution|university|college|academy)\s*:\s*(.+)$',
+            r'^\s*(?:school|institution|university|college|colegio|academy)\s*:\s*(.+)$',
             line_text,
             re.IGNORECASE
         )
@@ -535,6 +623,9 @@ def extract_education(text):
             name = re.sub(r'\b(?:19|20)\d{2}\b.*$', '', labelled.group(1)).strip(' .,;:|-')
             if not JUNK_INSTITUTION.match(name) and 2 < len(name) <= 100:
                 return name
+        colegio = re.search(r'(?i)\b(Colegio\s+de\s+[A-Za-z .\'-]+)', line_text)
+        if colegio:
+            return re.split(r'\t|\s{2,}', colegio.group(1))[0].strip(' .,;:|-')
         # Regex: look for University/College/Institute/etc.
         m = INSTITUTION_RE.search(line_text)
         if m:
@@ -559,7 +650,7 @@ def extract_education(text):
         description = line_text[degree_match.start():].strip()
         description = re.split(r'\b(?:19|20)\d{2}\b', description, maxsplit=1)[0]
         description = re.split(
-            r'\b(?:school|institution|university|college|academy)\s*:',
+            r'\b(?:school|institution|university|college|colegio|academy)\s*:',
             description,
             maxsplit=1,
             flags=re.IGNORECASE,
@@ -592,6 +683,8 @@ def extract_education(text):
                 break
 
         if not matched_degree:
+            continue
+        if re.match(r'^\s*\([^)]*high\s+school[^)]*\)\s*$', line, re.IGNORECASE):
             continue
 
         # Try to find institution on the same line first
@@ -656,6 +749,52 @@ def extract_years_of_experience(text):
     # 2. Prefer experience records extracted from a realistic section structure.
     records = extract_experience_records(text)
     if records:
+        # Calculate the union of dated employment periods so simultaneous
+        # roles (for example, a full-time role plus freelance work) are not
+        # double-counted as extra calendar experience.
+        section_match = re.search(
+            r'(?ims)^\s*(?:work\s+)?experiences?\s*:?\s*$\n(?P<body>.*?)(?=^\s*(?:education|skills?|certifications?|achievements?|leadership\s*(?:&|and)\s*activities|affiliations?|seminars?|references?)\s*:?\s*$|\Z)',
+            text,
+        )
+        dated_text = section_match.group('body') if section_match else ''
+        month_names = {
+            name.lower(): number for number, names in enumerate((
+                ('january', 'jan'), ('february', 'feb'), ('march', 'mar'),
+                ('april', 'apr'), ('may',), ('june', 'jun'), ('july', 'jul'),
+                ('august', 'aug'), ('september', 'sep'), ('october', 'oct'),
+                ('november', 'nov'), ('december', 'dec')
+            ), start=1) for name in names
+        }
+        token = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\d{4}|(?:19|20)\d{2}'
+        range_re = re.compile(rf'(?P<start>{token})\s*(?:-|–|—|to)\s*(?P<end>Present|Current|{token})', re.I)
+
+        def ordinal(value, is_end=False):
+            value = value.strip().lower()
+            if value in {'present', 'current'}:
+                now = datetime.now()
+                return now.year * 12 + now.month - 1
+            named = re.match(r'([a-z]+)\s*(\d{4})', value)
+            if named:
+                return int(named.group(2)) * 12 + month_names[named.group(1)[:3]] - 1
+            year = int(value)
+            return year * 12
+
+        intervals = []
+        for match in range_re.finditer(dated_text):
+            start = ordinal(match.group('start'))
+            end = ordinal(match.group('end'), is_end=True)
+            if end >= start and end - start <= 600:
+                intervals.append((start, max(end, start + 1)))
+        if intervals:
+            intervals.sort()
+            merged = [list(intervals[0])]
+            for start, end in intervals[1:]:
+                if start <= merged[-1][1]:
+                    merged[-1][1] = max(merged[-1][1], end)
+                else:
+                    merged.append([start, end])
+            return min(round(sum(end - start for start, end in merged) / 12.0, 1), 40.0)
+
         total_from_records = sum(
             float(record.get('years', 0) or 0)
             for record in records
@@ -708,7 +847,7 @@ def extract_experience_records(text):
     # Step 1: Isolate the Experience section
     # ------------------------------------------------------------------
     EXP_SECTION_HEADERS = re.compile(
-        r'^\s*((?:work\s+)?experience|employment(?:\s+history)?|work\s+history'
+        r'^\s*((?:work\s+)?experiences?|employment(?:\s+history)?|work\s+history'
         r'|professional\s+(?:experience|background)|career\s+history'
         r'|teaching\s+experience|academic\s+experience|faculty\s+experience'
         r'|education\s+experience|positions?\s+held)\s*:?\s*$',
@@ -716,19 +855,24 @@ def extract_experience_records(text):
     )
     NEXT_SECTION_HEADERS = re.compile(
         r'^\s*(education(?:al)?(?:\s+background)?|skills?|certifications?'
-        r'|projects?|awards?|interests?|references?|languages?|publications?'
-        r'|summary|objective|profile|activities|volunteer)\s*:?\s*$',
+        r'|projects?|awards?|achievements?|interests?|references?|languages?|publications?'
+        r'|summary|objective|profile|activities|affiliations?|seminars?(?:\s+and\s+trainings?)?'
+        r'|personal\s+(?:information|data)|leadership\s*(?:&|and)\s*activities|volunteer)\s*:?\s*$',
         re.IGNORECASE
     )
 
     all_lines = text.split('\n')
     exp_lines = []
     in_exp_section = False
+    found_exp_section = False
+    found_teaching_section = False
 
     for raw_line in all_lines:
         line = raw_line.strip()
         if EXP_SECTION_HEADERS.match(line):
             in_exp_section = True
+            found_exp_section = True
+            found_teaching_section = bool(re.search(r'(?i)teaching|faculty|academic', line))
             continue
         if in_exp_section and NEXT_SECTION_HEADERS.match(line):
             break
@@ -782,7 +926,8 @@ def extract_experience_records(text):
     # Job-title keywords (used to detect title lines)
     TITLE_KEYWORDS = re.compile(
         r'\b(developer|engineer|manager|analyst|consultant|architect|lead|'
-        r'specialist|programmer|administrator|officer|designer|director|'
+        r'specialist|programmer|administrator|officer|designer|director|staff|member|teaching|'
+        r'validator|statistician|'
         r'coordinator|supervisor|intern|associate|executive|scientist|teacher|writer|'
         r'instructor|professor|lecturer|faculty|principal|dean|tutor|counselor|counsellor|'
         r'registrar|librarian|educator|trainer|adviser|advisor|head\s+teacher|'
@@ -1014,7 +1159,7 @@ def extract_experience_records(text):
         value = re.sub(r'\(\s*\)', '', value)
         value = re.sub(r'^\s*(?:Role|Position|Job\s*Title|Designation|Title)\s*:\s*', '', value, flags=re.IGNORECASE)
         value = re.sub(r'\s+', ' ', value)
-        return value.strip(' .,-|()[]')
+        return value.strip(' .,-|')
 
     def _split_location_prefix_from_title(title):
         location_prefix = (
@@ -1087,6 +1232,131 @@ def extract_experience_records(text):
         elif title_location:
             location = title_location
         return title, company, location
+
+    # First parse common, deterministic resume layouts around a date anchor.
+    # This avoids reversing a title and company when a DOCX table is flattened.
+    structured_records = []
+
+    def _plausible_company(value):
+        value = (value or '').strip()
+        return (
+            2 < len(value) <= 120
+            and not DATE_RANGE_RE.search(value)
+            and not RESUME_SECTION_RE.match(value)
+            and not re.match(r'(?i)^(managed|developed|created|implemented|handled|handling|served|prepared|led|responsible|adviser)\b', value)
+            and not re.match(r'(?i)^(?:client|company|employer|role|position|job\s*title|product\s*title|designation)\s*:', value)
+            and not re.search(r'(?i)\b(?:email|phone|gmail|yahoo|outlook|responsibilities|duties)\b', value)
+            and not value.endswith(':')
+        )
+
+    def _add_structured(title, company, date_line, location=None):
+        title = _clean_job_title(title)
+        if not title or re.search(
+            r'(?i)dean.?s\s+lister|president.?s\s+lister|with\s+honors|magna\s+cum\s+laude|'
+            r'honor\s+society|achievement|award|^(?:handled|handling|served|prepared|adviser)\b', title
+        ):
+            return
+        # Cooperating-teacher lines describe an added responsibility at an
+        # already listed employer and should not double-count employment time.
+        if re.search(r'(?i)^cooperating\s+teacher$', title):
+            return
+        years = _years_from_range(date_line)
+        if years is None or years <= 0:
+            return
+        company_parts = re.split(r'\t+|\s{2,}', company, maxsplit=1)
+        company_name, inline_location = _split_company_location(company_parts[0])
+        if len(company_parts) > 1 and not location:
+            location = company_parts[1].strip()
+        if not company_name:
+            return
+        structured_records.append({
+            'job_title': title[:80],
+            'company': company_name,
+            'location': location or inline_location or 'Not Identified',
+            'years': years,
+        })
+
+    for index, line in enumerate(scan_lines):
+        stripped = line.strip()
+        date_match = DATE_RANGE_RE.search(stripped)
+        if not date_match:
+            continue
+        remainder = DATE_RANGE_RE.sub('', stripped).strip(' ()[]-–—,;|')
+        previous = scan_lines[index - 1].strip() if index > 0 else ''
+        previous_two = scan_lines[index - 2].strip() if index > 1 else ''
+
+        if remainder and TITLE_KEYWORDS.search(remainder) and _plausible_company(previous):
+            _add_structured(remainder, previous, stripped)
+            continue
+        if TITLE_KEYWORDS.search(previous) and _plausible_company(previous_two):
+            _add_structured(previous, previous_two, stripped)
+            continue
+        if (_plausible_company(previous) and found_teaching_section
+                and re.search(r'(?i)\b(?:school|academy|college|university|center|inc\.?)\b', previous)
+                and not re.search(r'(?i)teaching\s+internship', previous)):
+            _add_structured('Teacher', previous, stripped)
+            continue
+        if found_exp_section and not remainder:
+            company_hint = None
+            for back in range(index - 1, max(-1, index - 20), -1):
+                candidate = scan_lines[back].strip()
+                if re.search(r'(?i)\b(?:school|academy|college|university|center|inc\.?)\b', candidate) and _plausible_company(candidate):
+                    company_hint = candidate
+                    break
+            prior_title = next(
+                (record['job_title'] for record in reversed(structured_records)
+                 if re.search(r'(?i)teacher|faculty', record['job_title'])),
+                None,
+            )
+            if company_hint and prior_title:
+                _add_structured(prior_title, company_hint, stripped)
+
+    # Role, employer, then a date several lines later (common when duties sit
+    # between the employer and the school-year line).
+    for index, line in enumerate(scan_lines):
+        title = line.strip()
+        if (not TITLE_KEYWORDS.search(title) or len(title) > 70
+                or DATE_RANGE_RE.search(title) or index + 1 >= len(scan_lines)):
+            continue
+        company = scan_lines[index + 1].strip()
+        if not _plausible_company(company):
+            continue
+        for lookahead in range(index + 2, min(len(scan_lines), index + 22)):
+            candidate_date = scan_lines[lookahead].strip()
+            if DATE_RANGE_RE.search(candidate_date):
+                _add_structured(title, company, candidate_date)
+                break
+
+    # A following employer can omit the repeated role title. Reuse the most
+    # recent teaching/faculty title, but only for a clearly named institution.
+    for index, line in enumerate(scan_lines):
+        if not DATE_RANGE_RE.search(line):
+            continue
+        company_hint = None
+        for back in range(index - 1, max(-1, index - 20), -1):
+            candidate = scan_lines[back].strip()
+            if re.search(r'(?i)\b(?:school|academy|college|university|center|inc\.?)\b', candidate) and _plausible_company(candidate):
+                company_hint = candidate
+                break
+        if not company_hint:
+            continue
+        company_key = _clean_company(company_hint).lower()
+        if any(record['company'].lower() == company_key for record in structured_records):
+            continue
+        prior_title = next(
+            (record['job_title'] for record in reversed(structured_records)
+             if re.search(r'(?i)teacher|faculty', record['job_title'])),
+            None,
+        )
+        if prior_title:
+            _add_structured(prior_title, company_hint, line)
+
+    # "Pampanga High School Teaching Internship" + date on the next line.
+    for index, line in enumerate(scan_lines[:-1]):
+        match = re.match(r'(?i)^(.+?\b(?:school|college|university|academy))\s+(teaching\s+internship)$', line.strip())
+        if match and DATE_RANGE_RE.search(scan_lines[index + 1]):
+            location = DATE_RANGE_RE.sub('', scan_lines[index + 1]).strip(' ()[]-–—,;|') or None
+            _add_structured(match.group(2).title(), match.group(1), scan_lines[index + 1], location)
 
     blocks = []
     current_block = []
@@ -1295,7 +1565,13 @@ def extract_experience_records(text):
     # ------------------------------------------------------------------
     unique_records = []
     seen = set()
-    for rec in records:
+    record_candidates = structured_records if structured_records else records
+    for rec in record_candidates:
+        if (not rec.get('job_title') or re.search(
+            r'(?i)dean.?s\s+lister|president.?s\s+lister|with\s+honors|magna\s+cum\s+laude',
+            rec.get('job_title') or ''
+        )):
+            continue
         key = (rec['job_title'].lower(), rec['company'].lower())
         if key not in seen:
             seen.add(key)

@@ -30,6 +30,9 @@ SKILL_ALIASES = {
     "machine learning": ["ml"],
     "artificial intelligence": ["ai"],
     "natural language processing": ["nlp"],
+    "lesson planning": ["lesson plan", "lesson plans", "develop lesson plans", "developlessonplans", "curriculum planning", "prepared and delivered lessons", "designs engaging lesson plans"],
+    "classroom management": ["classroommanagement", "classroom management strategies", "managed classroom instruction"],
+    "communication skills": ["communication skill", "written and verbal communication", "verbal and written communication skills"],
     "c#": ["c sharp"],
     "c sharp": ["c#"],
 }
@@ -645,7 +648,7 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
     """
     from .nlp_pipeline import (
         clean_text, extract_contact_info, extract_education, 
-        extract_years_of_experience, extract_experience_records
+        extract_years_of_experience, extract_experience_records, extract_certifications
     )
     from .matching_engine import calculate_fit_score, calculate_text_similarity
     
@@ -669,6 +672,7 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
     contact_info = extract_contact_info(resume_text)
     extracted_edu = extract_education(resume_text)
     extracted_exp = extract_experience_records(resume_text)
+    extracted_certifications = extract_certifications(resume_text)
     total_exp_years = extract_years_of_experience(resume_text)
 
     # 4. Required Skills Match Score (0–100), then apply preferred bonus (capped at 100)
@@ -808,5 +812,6 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         "contact_info": contact_info,
         "extracted_edu": extracted_edu,
         "extracted_exp": extracted_exp,
+        "extracted_certifications": extracted_certifications,
         "total_exp_years": total_exp_years
     }
