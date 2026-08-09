@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import datetime
 
 from werkzeug.utils import secure_filename
 
@@ -10,6 +11,25 @@ def unique_upload_filename(original_filename):
     stem, ext = os.path.splitext(safe_name)
     stem = stem or "resume"
     return f"{stem}_{uuid.uuid4().hex[:12]}{ext.lower()}"
+
+
+def job_upload_directory(upload_root, job_id, job_title, uploaded_at=None):
+    """Return the job/year/month/week directory for a resume upload."""
+    uploaded_at = uploaded_at or datetime.now()
+    safe_title = secure_filename(job_title or "job").lower().replace("_", "-")
+    safe_title = safe_title or "job"
+    job_folder = f"{int(job_id)}-{safe_title}"
+    month_folder = uploaded_at.strftime("%m-%B").lower()
+    week_of_month = ((uploaded_at.day - 1) // 7) + 1
+
+    return os.path.join(
+        os.path.abspath(upload_root),
+        "jobs",
+        job_folder,
+        str(uploaded_at.year),
+        month_folder,
+        f"week-{week_of_month}",
+    )
 
 
 def is_path_inside_directory(path, directory):

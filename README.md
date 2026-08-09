@@ -74,3 +74,13 @@ Role: Manager
 ## Notes
 
 Local files such as `.env`, `venv/`, uploaded resumes, cache files, and the SQLite database are intentionally not uploaded to GitHub. They are created on each computer during setup and use.
+
+New resumes are stored outside the public static folder and organized by job and
+upload date:
+
+```text
+instance/uploads/jobs/<job-id>-<job-title>/<year>/<month>/week-<number>/<unique-filename>
+```
+
+Weeks are grouped by day of the month: 1-7, 8-14, 15-21, 22-28, and 29-31.
+Existing resumes keep their original stored paths.

@@ -19,6 +19,7 @@ Coverage:
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 
 from app.services.evidence import build_candidate_evidence
@@ -46,6 +47,7 @@ from app.services.recommender import (
     get_degree_rank,
 )
 from app.utils.files import (
+    job_upload_directory,
     is_path_inside_directory,
     safe_delete_uploaded_file,
     unique_upload_filename,
@@ -1528,6 +1530,46 @@ class TestUniqueUploadFilename(unittest.TestCase):
         self.assertIsInstance(result, str)
         self.assertGreater(len(result), 0)
 
+
+class TestJobUploadDirectory(unittest.TestCase):
+
+    def test_sorts_by_job_year_month_and_week(self):
+        with tempfile.TemporaryDirectory() as upload_root:
+            result = job_upload_directory(
+                upload_root,
+                12,
+                "Senior Software Engineer",
+                datetime(2026, 8, 9, 10, 30),
+            )
+            expected = os.path.join(
+                os.path.abspath(upload_root),
+                "jobs",
+                "12-senior-software-engineer",
+                "2026",
+                "08-august",
+                "week-2",
+            )
+            self.assertEqual(result, expected)
+
+    def test_week_five_is_used_for_end_of_month(self):
+        result = job_upload_directory(
+            "instance/uploads", 3, "Accountant", datetime(2026, 8, 31)
+        )
+        self.assertTrue(result.endswith(os.path.join("08-august", "week-5")))
+
+    def test_job_title_is_sanitized_and_cannot_escape_upload_root(self):
+        with tempfile.TemporaryDirectory() as upload_root:
+            result = job_upload_directory(
+                upload_root, 7, "../../HR / Manager", datetime(2026, 1, 1)
+            )
+            self.assertTrue(is_path_inside_directory(result, upload_root))
+            self.assertIn(os.path.join("jobs", "7-hr-manager"), result)
+
+    def test_job_id_separates_duplicate_titles(self):
+        uploaded_at = datetime(2026, 8, 9)
+        first = job_upload_directory("uploads", 1, "Teacher", uploaded_at)
+        second = job_upload_directory("uploads", 2, "Teacher", uploaded_at)
+        self.assertNotEqual(first, second)
 
 class TestIsPathInsideDirectory(unittest.TestCase):
 

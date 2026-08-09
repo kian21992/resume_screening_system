@@ -2,6 +2,8 @@ import os
 import re
 import hashlib
 import traceback
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask_login import current_user, login_required
 from app import db
@@ -12,7 +14,11 @@ from app.models import (
 )
 from app.services.extractor import extract_text_from_file
 from app.services.recommender import evaluate_candidate
-from app.utils.files import safe_delete_uploaded_file, unique_upload_filename
+from app.utils.files import (
+    job_upload_directory,
+    safe_delete_uploaded_file,
+    unique_upload_filename,
+)
 
 resume_bp = Blueprint('resume', __name__)
 
@@ -164,7 +170,18 @@ def _duplicate_resume_message(uploaded_filename, duplicate_resume):
 
 def process_resume_file(file, job):
     filename = unique_upload_filename(file.filename)
-    save_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+    try:
+        upload_timezone = ZoneInfo(current_app.config.get('DISPLAY_TIMEZONE', 'Asia/Manila'))
+    except ZoneInfoNotFoundError:
+        upload_timezone = timezone.utc
+    upload_directory = job_upload_directory(
+        current_app.config['UPLOAD_FOLDER'],
+        job.id,
+        job.title,
+        datetime.now(upload_timezone),
+    )
+    os.makedirs(upload_directory, exist_ok=True)
+    save_path = os.path.join(upload_directory, filename)
     file.save(save_path)
 
     try:
