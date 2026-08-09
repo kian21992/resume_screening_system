@@ -21,7 +21,7 @@ def ensure_schema_columns():
 
     column_defs = {
         'jobs': {
-            'critical_skills': 'TEXT',
+            
         },
         'screening_results': {
             'matched_critical_skills': 'TEXT',
