@@ -534,92 +534,142 @@ def estimate_decision_confidence(recommendation_label, resume_text, contact_info
     matched_critical_skills = matched_critical_skills or []
     missing_critical_skills = missing_critical_skills or []
 
-    score = 70
+    # Confidence is built from independently observable evidence.  Starting at
+    # zero prevents a sparse or failed extraction from looking trustworthy just
+    # because the resulting fit score is far from a decision threshold.
+    score = 0
     strengths = []
     concerns = []
     text_length = len(resume_text.strip())
+    words = _re.findall(r"[A-Za-z][A-Za-z'-]+", resume_text.lower())
+    unique_ratio = len(set(words)) / len(words) if words else 0.0
+    nonempty_lines = sum(bool(line.strip()) for line in resume_text.splitlines())
 
-    if text_length >= 1200:
-        score += 10
-        strengths.append("resume text was readable enough for screening")
-    elif text_length >= 500:
-        strengths.append("resume text was readable but somewhat limited")
+    # Length alone is easy to inflate (for example, repeated boilerplate), so
+    # lexical variety and line structure also contribute to extraction quality.
+    if text_length >= 700 and len(words) >= 100 and unique_ratio >= 0.18 and nonempty_lines >= 8:
+        score += 25
+        strengths.append("resume text is substantial and structurally readable")
+    elif text_length >= 300 and len(words) >= 45 and unique_ratio >= 0.12:
+        score += 16
+        strengths.append("resume text is readable but has limited extraction coverage")
     elif text_length > 0:
-        score -= 25
-        concerns.append("resume text was short, so extraction may be incomplete")
+        score += 4
+        concerns.append("resume text is sparse or repetitive, so extraction may be incomplete")
     else:
-        score -= 45
         concerns.append("no readable resume text was available")
 
     candidate_name = (contact_info.get("name") or "").strip().lower()
     if candidate_name and candidate_name not in {"unknown candidate", "unknown", "n/a"}:
-        score += 5
+        score += 7
         strengths.append("candidate identity was detected")
     else:
-        score -= 15
         concerns.append("candidate name was not confidently detected")
+
+    if contact_info.get("email") or contact_info.get("phone"):
+        score += 3
+        strengths.append("contact evidence was detected")
 
     total_required = len(required_skills)
     matched_required = len(matched_skills)
     required_ratio = matched_required / total_required if total_required else 1.0
     if total_required:
-        if required_ratio in (0.0, 1.0):
-            score += 12
-            strengths.append("required-skill result is clear")
-        elif required_ratio < 0.5:
-            score += 8
-            strengths.append("required-skill gap is large enough to be clear")
+        score += 15
+        if matched_required + len(missing_skills) == total_required:
+            score += 5
+            strengths.append("every configured required skill was evaluated")
         else:
-            concerns.append("required-skill evidence is mixed")
+            concerns.append("required-skill results do not reconcile with the configured list")
+
+        # A missing-skill conclusion is only strong when the source extraction
+        # itself is healthy; absence in sparse text is not reliable evidence.
+        if required_ratio == 1.0:
+            score += 5
+            strengths.append("all required skills have direct text evidence")
+        elif required_ratio == 0.0 and score < 40:
+            concerns.append("missing skills may reflect incomplete text extraction")
     else:
         concerns.append("no required-skill list was configured")
 
     if missing_critical_skills:
-        score += 12
-        strengths.append("missing critical skill evidence is a clear rule trigger")
+        if text_length >= 300 and len(words) >= 45:
+            score += 5
+            strengths.append("critical-skill rule was evaluated against readable text")
+        else:
+            concerns.append("critical skills appear missing from incomplete resume text")
     elif matched_critical_skills:
         score += 5
         strengths.append("critical-skill evidence was found")
 
     if experience_req and experience_req > 0:
         if extracted_exp or total_exp_years > 0:
-            score += 8
+            score += 10
             strengths.append("work experience evidence was detected")
         else:
-            score -= 22
             concerns.append("work experience requirement exists but no work history was extracted")
 
-        if 45.0 <= exp_score <= 55.0 or 90.0 <= exp_score < 100.0:
+        complete_exp = sum(
+            bool(record.get("job_title")) and bool(record.get("company"))
+            for record in extracted_exp if isinstance(record, dict)
+        )
+        if complete_exp:
+            score += min(8, complete_exp * 3)
+        elif extracted_exp:
+            concerns.append("work-history records are missing a title or employer")
+
+        record_years = sum(max(0, float(record.get("years") or 0)) for record in extracted_exp if isinstance(record, dict))
+        if record_years and total_exp_years and abs(record_years - total_exp_years) > max(2.0, total_exp_years * 0.5):
             score -= 8
+            concerns.append("total experience conflicts with extracted work-history durations")
+        elif record_years and total_exp_years:
+            score += 4
+            strengths.append("experience totals agree with extracted work history")
+
+        if 45.0 <= exp_score <= 55.0 or 90.0 <= exp_score < 100.0:
+            score -= 5
             concerns.append("experience score is near a review boundary")
     elif extracted_exp or total_exp_years > 0:
         strengths.append("work history was detected")
 
     if education_req and get_degree_rank(education_req) > 0:
         if extracted_edu or edu_score >= 100.0:
-            score += 6
+            score += 8
             strengths.append("education evidence was detected")
         else:
-            score -= 18
             concerns.append("education requirement exists but no education history was extracted")
 
+        complete_edu = any(
+            isinstance(record, dict) and record.get("degree") and record.get("institution")
+            for record in extracted_edu
+        )
+        if complete_edu:
+            score += 4
+        elif extracted_edu:
+            concerns.append("education record is missing a degree or institution")
+
         if 80.0 <= edu_score < 100.0:
-            score -= 6
+            score -= 4
             concerns.append("education score is close but not a full match")
     elif extracted_edu:
         strengths.append("education history was detected")
 
-    if abs(fit_score - 75.0) <= 3.0 or abs(fit_score - min_fit_score) <= 3.0:
-        score -= 10
+    threshold_distance = min(abs(fit_score - 75.0), abs(fit_score - min_fit_score))
+    if threshold_distance <= 3.0:
         concerns.append("fit score is close to a decision threshold")
+    elif threshold_distance >= 12.0:
+        score += 10
+        strengths.append("fit score is well separated from decision thresholds")
+    else:
+        score += 5
 
     if recommendation_label == "For Review":
-        score -= 10
         concerns.append("decision is intentionally routed for human review")
 
-    if score >= 78:
+    score = max(0, min(100, round(score)))
+
+    if score >= 75:
         level = "High"
-    elif score >= 48:
+    elif score >= 45:
         level = "Medium"
     else:
         level = "Low"
@@ -627,7 +677,7 @@ def estimate_decision_confidence(recommendation_label, resume_text, contact_info
     if recommendation_label == "For Review" and level == "High":
         level = "Medium"
 
-    reason_parts = []
+    reason_parts = [f"Evidence confidence score: {score}/100."]
     if strengths:
         reason_parts.append("Confidence support: " + "; ".join(strengths[:3]) + ".")
     if concerns:

@@ -1495,6 +1495,44 @@ class TestDecisionConfidence(unittest.TestCase):
         self.assertEqual(level, "Low")
         self.assertIn("Reviewer should verify", reason)
 
+    def test_repeated_text_does_not_create_high_confidence(self):
+        level, reason = estimate_decision_confidence(
+            recommendation_label="Not Qualified",
+            resume_text=("generic resume text " * 100),
+            contact_info={"name": "Unknown Candidate"},
+            extracted_edu=[], extracted_exp=[], total_exp_years=0,
+            required_skills=["Python", "SQL"], matched_skills=[],
+            missing_skills=["Python", "SQL"], matched_critical_skills=[],
+            missing_critical_skills=[], skill_score=0, exp_score=0,
+            edu_score=0, fit_score=20, experience_req=3,
+            education_req="Bachelor's",
+        )
+        self.assertNotEqual(level, "High")
+        self.assertIn("sparse or repetitive", reason)
+
+    def test_conflicting_experience_totals_are_flagged(self):
+        _, reason = estimate_decision_confidence(
+            recommendation_label="Qualified",
+            resume_text=("Maria Santos\nExperience\nDeveloper at Acme 2020-2022\n" * 20),
+            contact_info={"name": "Maria Santos"}, extracted_edu=[],
+            extracted_exp=[{"job_title": "Developer", "company": "Acme", "years": 2}],
+            total_exp_years=10, required_skills=["Python"], matched_skills=["Python"],
+            missing_skills=[], matched_critical_skills=[], missing_critical_skills=[],
+            skill_score=100, exp_score=100, edu_score=100, fit_score=90,
+            experience_req=3,
+        )
+        self.assertIn("conflicts with extracted work-history durations", reason)
+
+    def test_reason_exposes_numeric_evidence_score(self):
+        _, reason = estimate_decision_confidence(
+            recommendation_label="For Review", resume_text="Short resume",
+            contact_info={}, extracted_edu=[], extracted_exp=[], total_exp_years=0,
+            required_skills=[], matched_skills=[], missing_skills=[],
+            matched_critical_skills=[], missing_critical_skills=[], skill_score=100,
+            exp_score=100, edu_score=100, fit_score=60,
+        )
+        self.assertRegex(reason, r"Evidence confidence score: \d+/100\.")
+
 
 # ===========================================================================
 # File utilities
