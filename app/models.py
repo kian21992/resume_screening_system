@@ -31,7 +31,7 @@ class ScreeningCriteria(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     job_id = db.Column(db.Integer, db.ForeignKey('jobs.id'), nullable=False)
     min_fit_score = db.Column(db.Float, default=50.0)
-    requires_all_critical = db.Column(db.Boolean, default=True)
+    requires_all_critical = db.Column(db.Boolean, default=False)
 
 class Applicant(db.Model):
     __tablename__ = 'applicants'

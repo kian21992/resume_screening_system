@@ -776,9 +776,6 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
     elif required_skills and len(matched_skills) == 0:
         label = "Not Qualified"
         disqualification_reason = "none of the configured required skills were found in the resume"
-    elif required_skills and required_skill_score < 50.0:
-        label = "Not Qualified"
-        disqualification_reason = "less than half of the configured required skills were found in the resume"
     elif experience_req and experience_req > 0 and exp_score < 50.0:
         label = "Not Qualified"
         disqualification_reason = "the detected work experience is far below the configured minimum requirement"
