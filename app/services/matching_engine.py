@@ -20,12 +20,29 @@ def calculate_text_similarity(text1, text2):
         # Happens if texts are empty or contain no valid words
         return 0.0
 
-def calculate_fit_score(skill_score, exp_score, edu_score, weights=(0.50, 0.30, 0.20)):
+def calculate_fit_score(skill_score, exp_score, edu_score,
+                        text_similarity_score=None, weights=None):
     """
     Calculates the final weighted fit score.
-    Default weights: 50% skills, 30% experience, 20% education.
+
+    Two models are supported:
+    - Legacy 3-component model (text_similarity_score omitted):
+        50% skills, 30% experience, 20% education.
+    - 4-component model (text_similarity_score provided):
+        40% skills, 25% experience, 15% education, 20% TF-IDF cosine similarity.
+
+    In the 4-component model the TF-IDF + cosine similarity between the full
+    resume text and the job description contributes directly to the fit score,
+    so overall textual relevance influences ranking and screening labels — not
+    just discrete skill/experience/education matches.
     """
-    final_score = (skill_score * weights[0]) + (exp_score * weights[1]) + (edu_score * weights[2])
+    if text_similarity_score is None:
+        w = weights or (0.50, 0.30, 0.20)
+        final_score = (skill_score * w[0]) + (exp_score * w[1]) + (edu_score * w[2])
+    else:
+        w = weights or (0.40, 0.25, 0.15, 0.20)
+        final_score = ((skill_score * w[0]) + (exp_score * w[1]) +
+                       (edu_score * w[2]) + (text_similarity_score * w[3]))
     return round(min(final_score, 100.0), 2)
 
 def calculate_skills_match(resume_skills, required_skills):

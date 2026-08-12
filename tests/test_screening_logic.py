@@ -1563,9 +1563,11 @@ class TestEvaluateCandidate(unittest.TestCase):
             requires_all_critical=True,
         )
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertEqual(result["fit_score"], 100.0)
+        # 4-component fit: skills/exp/edu all 100, TF-IDF cosine ~17.66 -> 83.53.
+        # Label is still forced Not Qualified by the critical-skill rule.
+        self.assertEqual(result["fit_score"], 83.53)
         self.assertEqual(sorted(result["missing_critical_skills"]), sorted(["COBOL", "Fortran"]))
-        self.assertIn("fit score remains 100%", result["summary"])
+        self.assertIn("fit score remains 84%", result["summary"])
 
     def test_missing_required_skills_do_not_force_disqualification_without_critical_list(self):
         result = self._run(
@@ -1598,17 +1600,22 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertEqual(result["matched_skills"], [])
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertEqual(result["fit_score"], 50.0)
+        # 4-component fit: skills 0, exp/edu 100, TF-IDF cosine ~17.66 -> 43.53.
+        self.assertEqual(result["fit_score"], 43.53)
 
-    def test_missing_more_than_half_required_skills_is_not_qualified(self):
+    def test_missing_more_than_half_required_skills_routes_to_review(self):
+        # The old "< half of required skills -> hard Not Qualified" gate was
+        # removed; low skill coverage now simply lowers the weighted fit score,
+        # and a borderline result routes to human review rather than auto-failing.
         result = self._run(
             required_skills=["Python", "COBOL", "Fortran", "Haskell"],
             preferred_skills=["Docker"],
             min_fit_score=50.0,
         )
         self.assertEqual(result["matched_skills"], ["Python"])
-        self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertEqual(result["fit_score"], 67.5)
+        self.assertEqual(result["recommendation_label"], "For Review")
+        # skills 35 (1/4 matched + 10 preferred bonus), exp/edu 100, cosine ~17.66.
+        self.assertEqual(result["fit_score"], 57.53)
 
     def test_severe_experience_gap_is_not_qualified(self):
         result = self._run(
@@ -1617,7 +1624,9 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertLess(result["experience_score"], 50.0)
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        self.assertGreater(result["fit_score"], 75.0)
+        # Intent: the weighted score alone would clear the review threshold
+        # (fit ~68.95 >= 50), but the experience gate still forces Not Qualified.
+        self.assertGreater(result["fit_score"], 50.0)
 
     def test_partial_experience_gap_routes_candidate_to_review_without_changing_score(self):
         result = self._run(

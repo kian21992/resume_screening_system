@@ -15,6 +15,7 @@ def generate_recommendation(fit_score, min_fit_score=50.0):
 
 import re as _re
 import hashlib
+from rapidfuzz import fuzz
 
 SKILL_ALIASES = {
     "javascript": ["js", "ecmascript", "es6"],
@@ -57,6 +58,49 @@ def _literal_skill_found(resume_text_lower, skill_variant):
 
     return bool(_re.search(pattern, resume_text_lower))
 
+def _fuzzy_skill_found(resume_text_lower, skill, threshold=85):
+    """
+    Fuzzy fallback for skill detection, used only after literal + alias matching
+    fails. Handles inflection and word-order variation (e.g. 'planned lessons'
+    for 'lesson planning') that exact matching misses, by comparing the skill
+    phrase against sliding token windows of the resume.
+
+    Limitations (kept deliberately so matches stay explainable):
+    - Skipped for very short skills (< 4 chars, e.g. 'R', 'Go', 'C#') to avoid
+      false positives inside unrelated words.
+    - This is approximate string similarity, NOT semantic matching: synonyms
+      that share no word stems (e.g. 'curriculum development' for 'lesson
+      planning') still need an alias entry.
+    - `threshold` (0-100) is tunable; raise it to be stricter, lower to be
+      more lenient.
+    """
+    skill = skill.strip().lower()
+    if not skill:
+        return False
+    # Short single-token skills stay literal-only to avoid spurious matches.
+    if len(skill.split()) < 2 and len(skill) < 4:
+        return False
+
+    skill_tokens = skill.split()
+    n = len(skill_tokens)
+    resume_tokens = resume_text_lower.split()
+    if not resume_tokens:
+        return False
+
+    best = 0
+    for size in (n, n + 1, n + 2):
+        if size <= 0 or size > len(resume_tokens):
+            continue
+        for i in range(0, len(resume_tokens) - size + 1):
+            window = " ".join(resume_tokens[i:i + size])
+            score = fuzz.token_set_ratio(skill, window)
+            if score > best:
+                best = score
+                if best >= threshold:
+                    return True
+    return best >= threshold
+
+
 def _pick_phrase(options, seed, offset=0):
     digest = hashlib.md5(seed.encode("utf-8")).hexdigest()
     index = (int(digest[:8], 16) + offset) % len(options)
@@ -77,6 +121,9 @@ def analyze_skills(resume_skills_text, required_skills_list):
         if not skill:
             continue
         found = any(_literal_skill_found(resume_text_lower, variant) for variant in _skill_variants(skill))
+        if not found:
+            # Fall back to fuzzy matching so wording variations still match.
+            found = _fuzzy_skill_found(resume_text_lower, skill)
 
         if found:
             matched.append(skill)
@@ -104,6 +151,8 @@ def analyze_preferred_skills(resume_skills_text, preferred_skills_list):
         if not skill:
             continue
         found = any(_literal_skill_found(resume_text_lower, variant) for variant in _skill_variants(skill))
+        if not found:
+            found = _fuzzy_skill_found(resume_text_lower, skill)
         if found:
             matched_preferred.append(skill)
 
@@ -759,9 +808,12 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
     else:
         edu_score = min((cand_rank / job_rank) * 100.0, 100.0)
 
-    # 7. Final Weighted Fit Score (3-component model: Skills 50%, Experience 30%, Education 20%)
-    fit_score = calculate_fit_score(skill_score, exp_score, edu_score)
+    # 7. Final Weighted Fit Score (4-component model:
+    #    Skills 40%, Experience 25%, Education 15%, TF-IDF cosine similarity 20%).
+    #    The cosine similarity between the full resume text and the job description
+    #    now feeds the fit score directly, so it genuinely drives ranking and labels.
     text_similarity_score = calculate_text_similarity(cleaned_resume, cleaned_job)
+    fit_score = calculate_fit_score(skill_score, exp_score, edu_score, text_similarity_score)
     
     # 9. Recommendation & Critical Skill Enforcement
     label = generate_recommendation(fit_score, min_fit_score)
