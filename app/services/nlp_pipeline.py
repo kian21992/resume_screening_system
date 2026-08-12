@@ -22,7 +22,9 @@ RESUME_SECTION_RE = re.compile(
     r'^\s*(objective|summary|profile|professional\s+summary|technical\s+skills|skills|'
     r'education|work\s+experience|professional\s+experience|teaching\s+experience|'
     r'academic\s+experience|faculty\s+experience|experience|projects?|'
-    r'certifications?|responsibilities|environment|languages|tools)\s*:?\s*$',
+    r'certifications?|licenses?|licensure|eligibility|trainings?|seminars?|awards?|'
+    r'achievements?|references?|interests?|activities|affiliations?|publications?|'
+    r'personal\s+(?:information|data)|responsibilities|environment|languages|tools)\s*:?\s*$',
     re.IGNORECASE
 )
 
@@ -163,8 +165,6 @@ def extract_certifications(text):
             'date_obtained': date,
         })
 
-    joined = '\n'.join(lines)
-
     # Common regulated Philippine credentials and their resume abbreviations.
     known = [
         (r'\bRegistered\s+Psychometrician\b|\bRPm\b', 'Registered Psychometrician', 'Professional License'),
@@ -192,14 +192,37 @@ def extract_certifications(text):
             continue
         if section_active and RESUME_SECTION_RE.match(line):
             section_active = False
+            continue
         explicit = re.search(
             r'(?i)\b((?:certified|certification\s+(?:in|on)|licensed|registered)\s+'
             r'[A-Za-z][A-Za-z0-9 &/+.#-]{2,80})', line
         )
-        if explicit or (section_active and len(line) <= 120):
-            candidate = explicit.group(1) if explicit else line
+        section_candidate = section_active and len(line) <= 120
+        if section_candidate and (
+            date_re.fullmatch(line.strip(' ()'))
+            or re.match(r'(?i)^(?:issued|issuer|date|valid|expires?|expiration)\s*:', line)
+            or re.match(r'(?i)^(?:professional\s+)?(?:experience|education|skills?|projects?|awards?|references?)\b', line)
+        ):
+            section_candidate = False
+        if explicit or section_candidate:
+            # Inside a dedicated section, preserve meaningful prefixes such as
+            # "AWS" in "AWS Certified Cloud Practitioner". Outside a section,
+            # keep using the explicit credential phrase to avoid header noise.
+            candidate = line if section_candidate else explicit.group(1)
             date_match = date_re.search(candidate)
             candidate = date_re.sub('', candidate).strip(' .,:;|-()')
+            # Do not absorb a narrative clause that happens to follow a real
+            # credential on the same extracted line.
+            candidate = re.split(
+                r'(?i)\s+(?:with|who|and\s+has)\s+(?=(?:over\s+|more\s+than\s+)?\d+\s+years?\b)',
+                candidate,
+                maxsplit=1,
+            )[0].strip(' .,:;|-()')
+            if len(candidate.split()) > 16 or re.search(
+                r'(?i)\b(?:responsible\s+for|worked\s+on|developed|managed|objective|summary)\b',
+                candidate,
+            ):
+                continue
             if not re.fullmatch(r'(?i)(certifications?|licenses?|licensure|eligibility)', candidate):
                 add(candidate, 'Professional License' if re.search(r'(?i)licensed|registered|board|passer', candidate) else 'Certification', date_match.group(0) if date_match else None)
 
@@ -500,10 +523,10 @@ def extract_education(text):
     # Step 1: Isolate the Education section if one exists
     # ------------------------------------------------------------------
     EDU_SECTION_HEADERS = re.compile(
-        r'^\s*(?:education(?:al)?\s*(?:background|history|qualification|details)?'
-        r'|academic\s*(?:background|history|qualification)?'
+        r'^\s*(?:education(?:al)?(?:\s+(?:background|history|qualification|details))?'
+        r'|academic(?:\s+(?:background|history|qualification))?'
         r'|qualifications?'
-        r'|degrees?)\s*:?\s*(?P<content>.*)$',
+        r'|degrees?)\s*(?::\s*(?P<content>.*))?$',
         re.IGNORECASE
     )
     # Section headers that signal the end of the education section
@@ -534,7 +557,7 @@ def extract_education(text):
             continue
         if header_match:
             in_edu_section = True
-            inline_content = header_match.group('content').strip()
+            inline_content = (header_match.group('content') or '').strip()
             if inline_content:
                 edu_lines.append(inline_content)
             continue
@@ -592,10 +615,16 @@ def extract_education(text):
     # ------------------------------------------------------------------
     # Step 3: Institution extraction helpers
     # ------------------------------------------------------------------
+    INSTITUTION_KEYWORD = (
+        r'(?:Universit(?:y|ies)|Colleges?|Colegio|Institutes?|Schools?|Academy|Polytechnic)'
+    )
     INSTITUTION_RE = re.compile(
-        r'((?:(?:[A-Z][A-Za-z&.\'-]*|of|the)\s+){0,7}'
-        r'(?:University|College|Colegio|Institute|School|Academy|Polytechnic)'
-        r'(?:\s+(?:[A-Z][A-Za-z&.\'-]*|of|the)){0,4})'
+        rf'(?P<name>'
+        rf'(?:(?:[A-Za-z][A-Za-z&.\'-]*|of|the)\s+){{0,8}}'
+        rf'{INSTITUTION_KEYWORD}'
+        rf'(?:\s+(?:of|the|[A-Za-z][A-Za-z&.\'-]*)){{0,6}}'
+        rf')',
+        re.IGNORECASE,
     )
     # Strings that are definitely not school names
     JUNK_INSTITUTION = re.compile(
@@ -612,6 +641,43 @@ def extract_education(text):
         re.IGNORECASE
     )
 
+    ADDRESS_TAIL_RE = re.compile(
+        r'(?i)\s*(?:[,;|]|\s+-\s+)\s*'
+        r'(?:barangay|brgy\.?|city|municipality|province|district|campus|'
+        r'[A-Z][A-Za-z.-]+(?:\s+[A-Z][A-Za-z.-]+)?,\s*[A-Z][A-Za-z.-]+).*$'
+    )
+
+    def _clean_institution_name(value, labelled=False):
+        value = re.sub(r'^[\s\-*•]+', '', value or '')
+        value = re.sub(
+            r'(?i)^\s*(?:school|institution|university|college|colegio|academy)\s*:\s*',
+            '',
+            value,
+        )
+        value = re.sub(r'^\s*(?:(?:19|20)\d{2}\s*(?:-|–|—|to)\s*(?:present|(?:19|20)\d{2})|(?:19|20)\d{2})\s*', '', value, flags=re.I)
+        value = re.sub(r'\s+', ' ', value).strip(' .,;:|-')
+        # When the regex also captures a preceding degree phrase, retain only
+        # the institution introduced by a conventional "from" or "at" cue.
+        introduced = re.search(
+            rf'(?i)\b(?:from|at)\s+(?P<school>.+?\b{INSTITUTION_KEYWORD}\b(?:\s+(?:of|the|[A-Za-z][A-Za-z&.\'-]*)){{0,6}})',
+            value,
+        )
+        if introduced:
+            value = introduced.group('school').strip(' .,;:|-')
+        if not labelled:
+            value = ADDRESS_TAIL_RE.sub('', value).strip(' .,;:|-')
+        if not value or len(value) > 120 or JUNK_INSTITUTION.match(value):
+            return None
+        if INSTITUTION_NOISE_RE.search(value):
+            return None
+        if re.search(r'(?i)\b(?:responsibilities|duties|dean.?s\s+lister|honors?|awards?)\b', value):
+            return None
+        # Unlabelled candidates must contain an educational institution word.
+        # Labels may safely contain well-known acronyms such as PUP or UP.
+        if not labelled and not re.search(rf'\b{INSTITUTION_KEYWORD}\b', value, re.I):
+            return None
+        return value[:100]
+
     def _extract_institution(line_text, allow_org_fallback=True):
         """Try to pull a school name from a single line."""
         labelled = re.match(
@@ -621,16 +687,27 @@ def extract_education(text):
         )
         if labelled:
             name = re.sub(r'\b(?:19|20)\d{2}\b.*$', '', labelled.group(1)).strip(' .,;:|-')
-            if not JUNK_INSTITUTION.match(name) and 2 < len(name) <= 100:
+            name = _clean_institution_name(name, labelled=True)
+            if name and len(name) > 2:
                 return name
+        # Template rows often separate a degree and an acronym-only school by
+        # tabs or wide spacing: "Bachelor ...    JNTU, Hyderabad". The visual
+        # column boundary provides enough evidence to accept the acronym safely.
+        columns = [part.strip() for part in re.split(r'\t+|\s{2,}', line_text) if part.strip()]
+        if len(columns) >= 2:
+            for column in columns[1:]:
+                acronym = re.match(r'^([A-Z][A-Z0-9.&-]{1,11})(?=\s*(?:,|$))', column)
+                if acronym:
+                    return acronym.group(1)
         colegio = re.search(r'(?i)\b(Colegio\s+de\s+[A-Za-z .\'-]+)', line_text)
         if colegio:
-            return re.split(r'\t|\s{2,}', colegio.group(1))[0].strip(' .,;:|-')
+            name = re.split(r'\t|\s{2,}', colegio.group(1))[0].strip(' .,;:|-')
+            return _clean_institution_name(name)
         # Regex: look for University/College/Institute/etc.
         m = INSTITUTION_RE.search(line_text)
         if m:
-            name = re.sub(r'\s+', ' ', m.group(1)).strip(' .,;:|-')
-            if not JUNK_INSTITUTION.match(name) and len(name) > 4:
+            name = _clean_institution_name(m.group('name'))
+            if name and len(name) > 4:
                 return name
         if not allow_org_fallback or INSTITUTION_NOISE_RE.search(line_text):
             return None
@@ -638,11 +715,9 @@ def extract_education(text):
         doc = nlp(line_text)
         orgs = [ent.text.strip() for ent in doc.ents if ent.label_ == 'ORG']
         for org in orgs:
-            if (not JUNK_INSTITUTION.match(org)
-                    and not INSTITUTION_NOISE_RE.search(org)
-                    and len(org) > 3
-                    and len(org.split()) <= 10):
-                return org
+            cleaned_org = _clean_institution_name(org)
+            if cleaned_org and len(cleaned_org.split()) <= 10:
+                return cleaned_org
         return None
 
     def _extract_degree_description(line_text, degree_match, fallback_label):
@@ -654,6 +729,11 @@ def extract_education(text):
             description,
             maxsplit=1,
             flags=re.IGNORECASE,
+        )[0]
+        description = re.split(
+            r'\t+|\s{2,}(?=[A-Z][A-Z0-9.&-]{1,11}(?:\s*,|$))',
+            description,
+            maxsplit=1,
         )[0]
         school_after_separator = re.search(
             r'(?:[,;|]|\s+-\s+|\s+at\s+)\s*'
@@ -693,10 +773,22 @@ def extract_education(text):
         # If not found, inspect nearby lines in either direction. Education
         # layouts commonly place the school before or after the degree.
         if not institution:
-            nearby_indices = [i - 1, i + 1, i - 2, i + 2]
-            for j in nearby_indices:
-                if 0 <= j < len(scan_lines) and scan_lines[j].strip():
-                    institution = _extract_institution(scan_lines[j])
+            # Search only within this education entry. A blank line, another
+            # degree, or a section heading is a hard boundary; crossing one can
+            # attach the neighboring candidate's/school's text to this degree.
+            for direction in (-1, 1):
+                for distance in (1, 2):
+                    j = i + (direction * distance)
+                    if not 0 <= j < len(scan_lines):
+                        break
+                    nearby = scan_lines[j].strip()
+                    if not nearby or NEXT_SECTION_HEADERS.match(nearby):
+                        break
+                    if any(pattern.search(nearby) for pattern, _ in DEGREE_PATTERNS):
+                        break
+                    institution = _extract_institution(nearby)
+                    if institution:
+                        break
                 if institution:
                     break
 
@@ -1573,6 +1665,22 @@ def extract_experience_records(text):
         )):
             continue
         key = (rec['job_title'].lower(), rec['company'].lower())
+        overlapping_index = next((
+            index for index, existing in enumerate(unique_records)
+            if existing['company'].lower() == rec['company'].lower()
+            and abs(float(existing.get('years') or 0) - float(rec.get('years') or 0)) < 0.05
+            and (
+                existing['job_title'].lower() in rec['job_title'].lower()
+                or rec['job_title'].lower() in existing['job_title'].lower()
+            )
+        ), None)
+        if overlapping_index is not None:
+            if len(rec['job_title']) > len(unique_records[overlapping_index]['job_title']):
+                old = unique_records[overlapping_index]
+                seen.discard((old['job_title'].lower(), old['company'].lower()))
+                unique_records[overlapping_index] = rec
+                seen.add(key)
+            continue
         if key not in seen:
             seen.add(key)
             unique_records.append(rec)

@@ -28,9 +28,15 @@ from app.services.matching_engine import (
     calculate_skills_match,
     calculate_text_similarity,
 )
-from app.services.extractor import extract_text_from_docx, _clean_extracted_text
+from app.services.extractor import (
+    extract_text_from_docx,
+    extract_text_from_pdf,
+    _extract_page_columns,
+    _clean_extracted_text,
+)
 from app.services.nlp_pipeline import (
     extract_contact_info,
+    extract_certifications,
     extract_education,
     extract_experience_records,
     extract_years_of_experience,
@@ -614,6 +620,114 @@ State University
         self.assertFalse(evidence["experience_status"]["met"])
         self.assertFalse(evidence["education_status"]["met"])
 
+    def test_work_evidence_excludes_duties_and_next_section_text(self):
+        sample = """
+Work Experience
+Software Engineer
+Acme Corporation
+January 2021 - January 2024
+Responsibilities: Managed payroll records and prepared weekly reports
+Education
+Bachelor of Science in Computer Science
+State University
+"""
+        experience = [SimpleNamespace(
+            job_title="Software Engineer", company="Acme Corporation",
+            location="Manila", years=3.0,
+        )]
+        evidence = build_candidate_evidence(
+            resume_text=sample, matched_skills=[], missing_skills=[],
+            matched_critical_skills=[], missing_critical_skills=[],
+            matched_preferred_skills=[], experience_records=experience,
+            education_records=[],
+        )
+
+        excerpt = evidence["experience"][0]["excerpt"]
+        self.assertIn("Software Engineer", excerpt)
+        self.assertIn("Acme Corporation", excerpt)
+        self.assertIn("January 2021 - January 2024", excerpt)
+        self.assertNotIn("payroll", excerpt.lower())
+        self.assertNotIn("Bachelor", excerpt)
+
+    def test_education_evidence_excludes_honors_and_work_text(self):
+        sample = """
+Education
+Bachelor of Science in Information Technology
+State University
+2018 - 2022
+Awards: Dean's Lister and Best Capstone Project
+Work Experience
+Technical Support Specialist
+Northwind Services
+"""
+        education = [SimpleNamespace(
+            degree="Bachelor of Science in Information Technology",
+            institution="State University",
+        )]
+        evidence = build_candidate_evidence(
+            resume_text=sample, matched_skills=[], missing_skills=[],
+            matched_critical_skills=[], missing_critical_skills=[],
+            matched_preferred_skills=[], experience_records=[],
+            education_records=education,
+        )
+
+        excerpt = evidence["education"][0]["excerpt"]
+        self.assertIn("Bachelor of Science in Information Technology", excerpt)
+        self.assertIn("State University", excerpt)
+        self.assertIn("2018 - 2022", excerpt)
+        self.assertNotIn("Dean's Lister", excerpt)
+        self.assertNotIn("Technical Support", excerpt)
+
+    def test_generic_job_title_does_not_attach_to_neighboring_record(self):
+        sample = """
+Teaching Experience
+Pampanga Colleges
+2014 - 2018 Junior and Senior High School Teacher
+San Miguel Academy, Incorporated
+August 2022 - March 2026
+"""
+        experience = [SimpleNamespace(
+            job_title="Teacher", company="San Miguel Academy",
+            location="Pampanga", years=3.5,
+        )]
+        evidence = build_candidate_evidence(
+            resume_text=sample, matched_skills=[], missing_skills=[],
+            matched_critical_skills=[], missing_critical_skills=[],
+            matched_preferred_skills=[], experience_records=experience,
+            education_records=[],
+        )
+
+        excerpt = evidence["experience"][0]["excerpt"]
+        self.assertIn("San Miguel Academy", excerpt)
+        self.assertIn("August 2022 - March 2026", excerpt)
+        self.assertNotIn("Pampanga Colleges", excerpt)
+        self.assertNotIn("2014 - 2018", excerpt)
+
+    def test_annotated_education_date_keeps_date_but_removes_award(self):
+        sample = """
+Educational Background
+2022 - 2026 Tertiary Dean's Lister
+Bachelor of Secondary Education major in English
+Pampanga State University
+2016 - 2022 Secondary With Highest Honors
+Sto. Rosario National High School
+"""
+        education = [SimpleNamespace(
+            degree="Bachelor of Secondary Education major in English",
+            institution="Pampanga State University",
+        )]
+        evidence = build_candidate_evidence(
+            resume_text=sample, matched_skills=[], missing_skills=[],
+            matched_critical_skills=[], missing_critical_skills=[],
+            matched_preferred_skills=[], experience_records=[],
+            education_records=education,
+        )
+
+        excerpt = evidence["education"][0]["excerpt"]
+        self.assertIn("2022 - 2026", excerpt)
+        self.assertNotIn("Dean's Lister", excerpt)
+        self.assertNotIn("Highest Honors", excerpt)
+
 
 class TestExtractEducation(unittest.TestCase):
 
@@ -675,6 +789,105 @@ English Teacher
         self.assertEqual(records[1]["degree"], "BSEd major in English")
         self.assertEqual(records[1]["institution"], "University of Santo Tomas")
 
+    def test_degree_does_not_borrow_school_across_blank_entry_boundary(self):
+        sample = """
+Education
+Bachelor of Science in Information Technology
+
+Central State University
+Master of Arts in Education
+"""
+        records = extract_education(sample)
+
+        self.assertEqual(records[0]["institution"], "Unknown Institution")
+        self.assertEqual(records[1]["institution"], "Central State University")
+
+    def test_uppercase_institution_and_address_are_normalized(self):
+        sample = """
+EDUCATIONAL BACKGROUND
+BACHELOR OF SECONDARY EDUCATION MAJOR IN ENGLISH
+PAMPANGA STATE UNIVERSITY, BACOLOR, PAMPANGA
+2022 - 2026
+"""
+        records = extract_education(sample)
+
+        self.assertEqual(records[0]["institution"], "PAMPANGA STATE UNIVERSITY")
+
+    def test_labelled_institution_acronym_is_supported(self):
+        sample = """
+Education
+Bachelor of Science in Information Technology
+Institution: PUP
+2019 - 2023
+"""
+        records = extract_education(sample)
+
+        self.assertEqual(records[0]["institution"], "PUP")
+
+    def test_inline_degree_and_institution_do_not_merge_fields(self):
+        sample = """
+Education
+Bachelor of Science in Computer Science | Polytechnic University of the Philippines
+2018 - 2022
+"""
+        records = extract_education(sample)
+
+        self.assertEqual(
+            records[0]["institution"],
+            "Polytechnic University of the Philippines",
+        )
+
+    def test_company_in_education_section_is_not_an_institution(self):
+        sample = """
+Education
+Bachelor of Science in Computer Science
+Training sponsored by Acme Corporation
+Work Experience
+Software Engineer
+"""
+        records = extract_education(sample)
+
+        self.assertEqual(records[0]["institution"], "Unknown Institution")
+
+    def test_academic_sentence_is_not_mistaken_for_education_heading(self):
+        sample = """
+Professional Summary
+Committed to the academic growth of learners.
+Work Experience
+English Teacher
+Education
+Bachelor of Secondary Education
+Pampanga Colleges
+"""
+        records = extract_education(sample)
+
+        self.assertEqual(records[0]["institution"], "Pampanga Colleges")
+
+
+class TestCertificationPrecision(unittest.TestCase):
+
+    def test_certification_section_stops_at_uncommon_resume_section(self):
+        sample = """
+Certifications
+AWS Certified Cloud Practitioner - 2024
+References
+Maria Reyes, HR Manager
+Available upon request
+"""
+        records = extract_certifications(sample)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["certification_name"], "AWS Certified Cloud Practitioner")
+
+    def test_certification_does_not_absorb_experience_narrative(self):
+        sample = """
+Professional Summary
+Certified Scrum Master with 10 years of project management experience.
+"""
+        records = extract_certifications(sample)
+
+        self.assertEqual(records[0]["certification_name"], "Certified Scrum Master")
+
 
 class TestDocxExtraction(unittest.TestCase):
 
@@ -710,6 +923,11 @@ class TestDocxExtraction(unittest.TestCase):
 
         self.assertIn("Development of internal applications", cleaned)
 
+    def test_cleaner_removes_invisible_word_break_artifacts(self):
+        cleaned = _clean_extracted_text("Data\u200bbase Admin\u00adistrator")
+
+        self.assertEqual(cleaned, "Database Administrator")
+
     def test_pdf_and_docx_style_date_wrapping_extract_same_experience(self):
         pdf_style = _clean_extracted_text("""
 Work Experience
@@ -731,6 +949,50 @@ January 2020 - Present
         self.assertEqual(pdf_records, docx_records)
         self.assertEqual(pdf_records[0]["job_title"], "Software Engineer")
         self.assertEqual(pdf_records[0]["company"], "Acme Digital Solutions")
+
+    def test_two_column_pdf_keeps_education_institution_in_education_column(self):
+        class PositionedPage:
+            width = 600
+
+            def __init__(self):
+                self.words = []
+
+            def add_line(self, x, top, value):
+                cursor = x
+                for token in value.split():
+                    width = max(len(token) * 5, 8)
+                    self.words.append({
+                        "text": token, "x0": cursor, "x1": cursor + width,
+                        "top": top,
+                    })
+                    cursor += width + 4
+
+            def extract_words(self, **_kwargs):
+                return self.words
+
+        page = PositionedPage()
+        # Right column starts higher, as in templates with a photo/sidebar.
+        for index, value in enumerate([
+            "MARIA SANTOS", "PROFESSIONAL SUMMARY",
+            "Experienced classroom educator", "TEACHING EXPERIENCE",
+            "English Teacher", "Bright Future Academy", "2022 - Present",
+            "Prepared lessons and assessments for students",
+        ]):
+            page.add_line(250, 20 + index * 24, value)
+        for index, value in enumerate([
+            "EDUCATION", "Bachelor of Secondary Education", "Major in English",
+            "Pampanga State University", "2018 - 2022", "SKILLS",
+            "Curriculum Planning", "Classroom Management", "Communication",
+            "Leadership", "Assessment", "Lesson Planning",
+        ]):
+            page.add_line(25, 170 + index * 24, value)
+
+        extracted = _extract_page_columns(page)
+
+        self.assertLess(extracted.index("PROFESSIONAL SUMMARY"), extracted.index("TEACHING EXPERIENCE"))
+        self.assertLess(extracted.index("EDUCATION"), extracted.index("Pampanga State University"))
+        education = extract_education(extracted)
+        self.assertEqual(education[0]["institution"], "Pampanga State University")
 
 
 class TestAnalyzeSkills(unittest.TestCase):
