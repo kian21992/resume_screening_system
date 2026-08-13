@@ -2356,5 +2356,64 @@ SKILLS"""
         self.assertEqual(matched, ['Lesson Planning', 'Classroom Management'])
         self.assertEqual(missing, [])
 
+
+class TestExtractionImprovements(unittest.TestCase):
+    """Locks in the extraction accuracy fixes (experience headers, proximity
+    fallback, and education-domain certifications)."""
+
+    def test_teaching_experience_heading_is_recognized(self):
+        text = (
+            "Teaching Experience\n"
+            "English Teacher, San Jose High School   June 2016 - June 2024\n"
+            "Handled lesson planning and classroom management.\n"
+            "Education\n"
+            "Bachelor of Secondary Education, Holy Angel University 2012 - 2016\n"
+        )
+        # ~8 years of teaching; the 2012-2016 study period must NOT be counted.
+        self.assertEqual(extract_years_of_experience(text), 8.0)
+
+    def test_employment_history_heading_is_recognized(self):
+        text = (
+            "Employment History\n"
+            "Sales Associate at ABC Corp   2019 - 2023\n"
+            "Cashier at XYZ Store   2017 - 2019\n"
+        )
+        self.assertEqual(extract_years_of_experience(text), 6.0)
+
+    def test_proximity_fallback_recovers_job_dates_without_heading(self):
+        text = (
+            "Juan Dela Cruz\n"
+            "Software Engineer, Acme Inc   Jan 2018 - Jan 2023\n"
+            "Bachelor of Science in Computer Science, State University   2013 - 2017\n"
+        )
+        # 5 years from the engineer role; the degree period is excluded.
+        self.assertEqual(extract_years_of_experience(text), 5.0)
+
+    def test_school_workplace_is_not_mistaken_for_education(self):
+        text = (
+            "Ana Cruz\n"
+            "Teacher at Manila Science High School  2015 - 2020\n"
+            "Studied at University of the Philippines, BS Biology  2010 - 2014\n"
+        )
+        # Working AT a school is employment; the BS Biology study period is not.
+        self.assertEqual(extract_years_of_experience(text), 5.0)
+
+    def test_education_only_resume_yields_zero_experience(self):
+        text = (
+            "Maria Reyes\n"
+            "Bachelor of Elementary Education, City College   2010 - 2014\n"
+        )
+        self.assertEqual(extract_years_of_experience(text), 0.0)
+
+    def test_new_credentials_are_detected(self):
+        for sample, expected in [
+            ("Certifications\nTESOL Certificate 2021", "TESOL Certificate"),
+            ("National Certificate II in Food Service", "TESDA National Certificate"),
+            ("PRC License (Professional Teacher)", "PRC License"),
+        ]:
+            names = [c["certification_name"] for c in extract_certifications(sample)]
+            self.assertIn(expected, names, msg=f"{expected} not found in {names}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -174,6 +174,10 @@ def extract_certifications(text):
         (r'\bCertified\s+Public\s+Accountant\b|\bCPA\b', 'Certified Public Accountant', 'Professional License'),
         (r'\bRegistered\s+Criminologist\b|\bRCRIM\b', 'Registered Criminologist', 'Professional License'),
         (r'\bCivil\s+Service\s+(?:Professional\s+)?Eligible\b|\bCSE\s+Passer\b', 'Civil Service Eligibility', 'Eligibility'),
+        (r'\bTESOL\b|\bTeaching\s+English\s+to\s+Speakers\s+of\s+Other\s+Languages\b', 'TESOL Certificate', 'Certification'),
+        (r'\bTEFL\b|\bTeaching\s+English\s+as\s+a\s+Foreign\s+Language\b', 'TEFL Certificate', 'Certification'),
+        (r'\bNational\s+Certificate\s+(?:Level\s+)?(?:I{1,3}|IV)\b|\bNC\s*(?:II|III|IV|I)\b', 'TESDA National Certificate', 'Certification'),
+        (r'\bPRC\s+(?:License|Licensed|ID|Licensure)\b', 'PRC License', 'Professional License'),
     ]
     for pattern, canonical, kind in known:
         for index, line in enumerate(lines):
@@ -845,7 +849,15 @@ def extract_years_of_experience(text):
         # roles (for example, a full-time role plus freelance work) are not
         # double-counted as extra calendar experience.
         section_match = re.search(
-            r'(?ims)^\s*(?:work\s+)?experiences?\s*:?\s*$\n(?P<body>.*?)(?=^\s*(?:education|skills?|certifications?|achievements?|leadership\s*(?:&|and)\s*activities|affiliations?|seminars?|references?)\s*:?\s*$|\Z)',
+            r'(?ims)^\s*(?:(?:work\s+)?experiences?|employment(?:\s+history)?'
+            r'|work\s+history|professional\s+(?:experience|background)'
+            r'|career\s+history|teaching\s+experience|academic\s+experience'
+            r'|faculty\s+experience|education\s+experience|positions?\s+held)'
+            r'\s*:?\s*$\n(?P<body>.*?)(?=^\s*(?:education(?:al)?(?:\s+background)?'
+            r'|skills?|certifications?|achievements?|awards?|projects?|interests?'
+            r'|languages?|publications?|summary|objective|profile'
+            r'|leadership\s*(?:&|and)\s*activities|affiliations?|seminars?'
+            r'|references?|personal\s+(?:information|data)|volunteer)\s*:?\s*$|\Z)',
             text,
         )
         dated_text = section_match.group('body') if section_match else ''
@@ -895,23 +907,78 @@ def extract_years_of_experience(text):
         if total_from_records > 0:
             return min(round(total_from_records, 1), 40.0)
 
-    # 3. Do not count arbitrary date ranges from education or certifications.
-    # Patterns: "2018 - 2021", "2015 to Present", "2017-Present"
-    current_year = datetime.now().year
-    ranges = re.findall(r'\b(19\d{2}|20\d{2})\s*(?:-|–|—|to)\s*(Present|19\d{2}|20\d{2})\b', text, re.IGNORECASE)
-    ranges = []
-    total_years = 0.0
-    for start_str, end_str in ranges:
-        try:
-            start = int(start_str)
-            end = current_year if end_str.lower() == 'present' else int(end_str)
-            if end >= start and end - start <= 40:
-                total_years += (end - start)
-        except ValueError:
-            pass
+    # 3. Proximity fallback: no explicit statement and no usable dated section
+    #    was found. Recover employment periods from date ranges that sit on or
+    #    directly next to a job-title line, while EXCLUDING ranges near
+    #    education/graduation lines so schooling years are never counted as work.
+    #    This only runs as a last resort, so it can add recall but not override
+    #    the more precise section-based calculation above.
+    MONTH_MAP = {n.lower(): i for i, names in enumerate((
+        ('january', 'jan'), ('february', 'feb'), ('march', 'mar'),
+        ('april', 'apr'), ('may',), ('june', 'jun'), ('july', 'jul'),
+        ('august', 'aug'), ('september', 'sep'), ('october', 'oct'),
+        ('november', 'nov'), ('december', 'dec')
+    ), start=1) for n in names}
+    MTOK = (r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?'
+            r'|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?'
+            r'|Dec(?:ember)?)')
+    DTOK = rf'(?:{MTOK}\s+\d{{4}}|(?:19|20)\d{{2}})'
+    PROX_RANGE = re.compile(
+        rf'(?P<s>{DTOK})\s*(?:-|\u2013|\u2014|to)\s*(?P<e>Present|Current|{DTOK})',
+        re.IGNORECASE)
+    TITLE_HINT = re.compile(
+        r'(?i)\b(developer|engineer|manager|analyst|consultant|architect|lead'
+        r'|specialist|programmer|administrator|officer|designer|director'
+        r'|coordinator|supervisor|intern|associate|executive|scientist|teacher'
+        r'|instructor|professor|lecturer|faculty|principal|dean|tutor|registrar'
+        r'|librarian|educator|trainer|adviser|advisor|accountant|auditor|nurse'
+        r'|physician|therapist|assistant|technician|staff|clerk|cashier'
+        r'|representative|agent|secretary|receptionist|encoder|teller)\b')
+    EDU_HINT = re.compile(
+        r'(?i)\b(bachelor|master|ph\.?d|doctorate|doctor\s+of|associate\s+degree'
+        r'|diploma\s+in|graduated|cum\s+laude|magna\s+cum|summa\s+cum|degree\s+in'
+        r'|major\s+in|undergraduate|post.?graduate|tertiary\s+education'
+        r'|secondary\s+education|elementary\s+education)\b')
 
-    if total_years > 0:
-        return min(round(total_years, 1), 40.0)
+    def _ord_months(value):
+        value = value.strip().lower()
+        if value in {'present', 'current'}:
+            now = datetime.now()
+            return now.year * 12 + now.month - 1
+        named = re.match(r'([a-z]+)\s+(\d{4})', value)
+        if named:
+            return int(named.group(2)) * 12 + MONTH_MAP[named.group(1)[:3]] - 1
+        return int(value) * 12
+
+    lines = text.split('\n')
+    intervals = []
+    for i, line in enumerate(lines):
+        match = PROX_RANGE.search(line)
+        if not match:
+            continue
+        neighborhood = ' '.join(lines[max(0, i - 1):i + 2])
+        # Skip ranges that live near education text; require a job title nearby.
+        if EDU_HINT.search(neighborhood):
+            continue
+        if not TITLE_HINT.search(neighborhood):
+            continue
+        try:
+            start = _ord_months(match.group('s'))
+            end = _ord_months(match.group('e'))
+        except (ValueError, KeyError):
+            continue
+        if end >= start and end - start <= 600:
+            intervals.append((start, max(end, start + 1)))
+
+    if intervals:
+        intervals.sort()
+        merged = [list(intervals[0])]
+        for start, end in intervals[1:]:
+            if start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        return min(round(sum(end - start for start, end in merged) / 12.0, 1), 40.0)
 
     return 0.0
 
