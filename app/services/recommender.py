@@ -16,6 +16,14 @@ def generate_recommendation(fit_score, min_fit_score=50.0):
 import re as _re
 import hashlib
 from rapidfuzz import fuzz
+from nltk.stem import PorterStemmer
+
+_STEMMER = PorterStemmer()
+
+
+def _stem_tokens(text):
+    """Lowercase, tokenize on alphanumerics, and Porter-stem each token."""
+    return [_STEMMER.stem(t) for t in _re.findall(r'[a-z0-9]+', text.lower())]
 
 SKILL_ALIASES = {
     "javascript": ["js", "ecmascript", "es6"],
@@ -681,6 +689,41 @@ def _fuzzy_skill_found(resume_text_lower, skill, threshold=85):
     return best >= threshold
 
 
+def _stemmed_skill_found(resume_text_lower, skill, slack=3):
+    """
+    Stemmed-token fallback, used only after literal + alias + fuzzy matching
+    fail. Collapses inflected forms so a skill still matches when the resume
+    uses a different grammatical form or word order — e.g. 'lesson planning'
+    matches 'planned engaging lessons', and 'classroom management' matches
+    'managing the classroom' (shared stems {lesson, plan} / {classroom, manag}).
+
+    Requires ALL stemmed skill tokens to co-occur inside a sliding window
+    (skill length + `slack` words), so unrelated scattered mentions elsewhere
+    in the resume do not produce a false match. Skipped for very short
+    single-token skills (< 4 chars) to avoid noise, matching the fuzzy guard.
+    """
+    skill = skill.strip().lower()
+    if not skill:
+        return False
+    if len(skill.split()) < 2 and len(skill) < 4:
+        return False
+
+    skill_set = set(_stem_tokens(skill))
+    if not skill_set:
+        return False
+    resume_stems = _stem_tokens(resume_text_lower)
+    if not resume_stems:
+        return False
+
+    win = len(skill_set) + slack
+    if win >= len(resume_stems):
+        return skill_set.issubset(set(resume_stems))
+    for i in range(0, len(resume_stems) - win + 1):
+        if skill_set.issubset(set(resume_stems[i:i + win])):
+            return True
+    return False
+
+
 def _pick_phrase(options, seed, offset=0):
     digest = hashlib.md5(seed.encode("utf-8")).hexdigest()
     index = (int(digest[:8], 16) + offset) % len(options)
@@ -704,6 +747,9 @@ def analyze_skills(resume_skills_text, required_skills_list):
         if not found:
             # Fall back to fuzzy matching so wording variations still match.
             found = _fuzzy_skill_found(resume_text_lower, skill)
+        if not found:
+            # Final fallback: stemmed-token match for inflected paraphrases.
+            found = _stemmed_skill_found(resume_text_lower, skill)
 
         if found:
             matched.append(skill)
@@ -733,6 +779,8 @@ def analyze_preferred_skills(resume_skills_text, preferred_skills_list):
         found = any(_literal_skill_found(resume_text_lower, variant) for variant in _skill_variants(skill))
         if not found:
             found = _fuzzy_skill_found(resume_text_lower, skill)
+        if not found:
+            found = _stemmed_skill_found(resume_text_lower, skill)
         if found:
             matched_preferred.append(skill)
 
@@ -766,6 +814,7 @@ def get_degree_rank(degree_str):
         r'\bbachelor', r'\bb\.s\.?\b', r'\bb\.a\.?\b', r'\bb\.e\.?\b',
         r'\bbtech\b', r'\bbs\b', r'\bba\b', r'\bbe\b',
         r'\b(?:bsed|beed|bsn|bsit|bscs|bsa|bba|bshm|bsba|ab)\b',
+        r'\b(?:bped|bece|bsece|bse|bsce|bpe|bsbio|bsmath|bseng)\b',
     ]):
         return 3
     if _matches([r'\bassociate']):
@@ -1393,9 +1442,9 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         edu_score = min((cand_rank / job_rank) * 100.0, 100.0)
 
     # 7. Final Weighted Fit Score (4-component model:
-    #    Skills 40%, Experience 25%, Education 15%, TF-IDF cosine similarity 20%).
-    #    The cosine similarity between the full resume text and the job description
-    #    now feeds the fit score directly, so it genuinely drives ranking and labels.
+    #    Skills 50%, Experience 25%, Education 15%, TF-IDF cosine similarity 10%).
+    #    Cosine is weighted modestly because raw resume-vs-job cosine is
+    #    structurally low; a higher weight would cap strong candidates' scores.
     text_similarity_score = calculate_text_similarity(cleaned_resume, cleaned_job)
     fit_score = calculate_fit_score(skill_score, exp_score, edu_score, text_similarity_score)
     
@@ -1497,5 +1546,19 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         "extracted_edu": extracted_edu,
         "extracted_exp": extracted_exp,
         "extracted_certifications": extracted_certifications,
-        "total_exp_years": total_exp_years
+        "total_exp_years": total_exp_years,
+        # Per-component breakdown to make validation easy: shows each raw
+        # sub-score, its weight, and how many points it contributed to the
+        # final fit score. The weakest contributor is the bottleneck to fix.
+        "score_breakdown": {
+            "weights": {"skills": 0.50, "experience": 0.25,
+                        "education": 0.15, "text_similarity": 0.10},
+            "contributions": {
+                "skills": round(skill_score * 0.50, 2),
+                "experience": round(exp_score * 0.25, 2),
+                "education": round(edu_score * 0.15, 2),
+                "text_similarity": round(text_similarity_score * 0.10, 2),
+            },
+            "fit_score": round(fit_score, 2),
+        }
     }

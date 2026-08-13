@@ -29,18 +29,20 @@ def calculate_fit_score(skill_score, exp_score, edu_score,
     - Legacy 3-component model (text_similarity_score omitted):
         50% skills, 30% experience, 20% education.
     - 4-component model (text_similarity_score provided):
-        40% skills, 25% experience, 15% education, 20% TF-IDF cosine similarity.
+        50% skills, 25% experience, 15% education, 10% TF-IDF cosine similarity.
 
-    In the 4-component model the TF-IDF + cosine similarity between the full
-    resume text and the job description contributes directly to the fit score,
-    so overall textual relevance influences ranking and screening labels — not
-    just discrete skill/experience/education matches.
+    The 4-component model feeds TF-IDF + cosine similarity between the resume
+    and job description directly into the fit score, so overall textual
+    relevance influences ranking. Its weight is kept modest (10%) because raw
+    cosine between a full resume and a short job description is structurally
+    low, so a larger weight would cap the achievable score for strong,
+    well-matched candidates.
     """
     if text_similarity_score is None:
         w = weights or (0.50, 0.30, 0.20)
         final_score = (skill_score * w[0]) + (exp_score * w[1]) + (edu_score * w[2])
     else:
-        w = weights or (0.40, 0.25, 0.15, 0.20)
+        w = weights or (0.50, 0.25, 0.15, 0.10)
         final_score = ((skill_score * w[0]) + (exp_score * w[1]) +
                        (edu_score * w[2]) + (text_similarity_score * w[3]))
     return round(min(final_score, 100.0), 2)

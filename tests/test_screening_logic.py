@@ -1879,9 +1879,9 @@ class TestEvaluateCandidate(unittest.TestCase):
         self.assertEqual(result["recommendation_label"], "Not Qualified")
         # 4-component fit: skills/exp/edu all 100, TF-IDF cosine ~17.66 -> 83.53.
         # Label is still forced Not Qualified by the critical-skill rule.
-        self.assertEqual(result["fit_score"], 83.53)
+        self.assertEqual(result["fit_score"], 91.77)
         self.assertEqual(sorted(result["missing_critical_skills"]), sorted(["COBOL", "Fortran"]))
-        self.assertIn("fit score remains 84%", result["summary"])
+        self.assertIn("fit score remains 92%", result["summary"])
 
     def test_missing_required_skills_do_not_force_disqualification_without_critical_list(self):
         result = self._run(
@@ -1914,8 +1914,8 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertEqual(result["matched_skills"], [])
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        # 4-component fit: skills 0, exp/edu 100, TF-IDF cosine ~17.66 -> 43.53.
-        self.assertEqual(result["fit_score"], 43.53)
+        # 4-component fit: skills 0, exp/edu 100, TF-IDF cosine ~17.66 -> 41.77.
+        self.assertEqual(result["fit_score"], 41.77)
 
     def test_missing_more_than_half_required_skills_routes_to_review(self):
         # The old "< half of required skills -> hard Not Qualified" gate was
@@ -1928,8 +1928,8 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertEqual(result["matched_skills"], ["Python"])
         self.assertEqual(result["recommendation_label"], "For Review")
-        # skills 35 (1/4 matched + 10 preferred bonus), exp/edu 100, cosine ~17.66.
-        self.assertEqual(result["fit_score"], 57.53)
+        # skills 35 (1/4 matched + 10 preferred bonus), exp/edu 100, cosine ~17.66 -> 59.27.
+        self.assertEqual(result["fit_score"], 59.27)
 
     def test_severe_experience_gap_is_not_qualified(self):
         result = self._run(
