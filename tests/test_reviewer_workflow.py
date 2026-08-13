@@ -1,12 +1,15 @@
+import io
 import tempfile
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 
 from app import create_app, db
 from app.models import (
     Applicant,
     ExtractedEducation,
     ExtractedExperience,
+    ExtractedSkill,
     JobDescription,
     RecommendationLog,
     Resume,
@@ -192,9 +195,61 @@ class TestReviewerWorkflow(unittest.TestCase):
         self.assertIn(b"Move to Interview", detail.data)
         self.assertIn(b"Decision Confidence", detail.data)
         self.assertIn(b"High Confidence", detail.data)
+        self.assertIn(b"Extracted Resume Skills", detail.data)
         self.assertEqual(listing.status_code, 200)
         self.assertIn(b"Pending Review", listing.data)
         self.assertIn(b"High Confidence", listing.data)
+
+    def test_new_upload_persists_full_reconstructed_skill_phrases(self):
+        resume_text = """
+Andrea Valdez
+andrea.unique@example.com
+SKILLS & QUALITIES
+  Curriculum and Subject
+Matter knowledge
+  Develop Lesson Plans
+  Integrating Technology in
+Teaching and Learning
+Processes
+PROFESSIONAL EXPERIENCE
+Learning Facilitator
+Unique Learning Center
+January 2021 - January 2025
+EDUCATION
+Bachelor of Education
+Unique State College
+"""
+        with tempfile.TemporaryDirectory() as upload_dir:
+            self.app.config["UPLOAD_FOLDER"] = upload_dir
+            with patch(
+                "app.routes.resume_routes.extract_text_from_file",
+                return_value=resume_text,
+            ):
+                response = self.client.post(
+                    "/resume/upload",
+                    data={
+                        "job_id": str(self.job_id),
+                        "file": (io.BytesIO(b"unique-docx-content"), "andrea.docx"),
+                    },
+                    content_type="multipart/form-data",
+                )
+
+        self.assertEqual(response.status_code, 302)
+        uploaded = Resume.query.filter(Resume.filename.like("andrea_%")).one()
+        stored_skills = [
+            row.skill_name
+            for row in ExtractedSkill.query.filter_by(resume_id=uploaded.id)
+            .order_by(ExtractedSkill.id)
+            .all()
+        ]
+        self.assertIn("Curriculum and Subject Matter knowledge", stored_skills)
+        self.assertIn("Develop Lesson Plans", stored_skills)
+        self.assertIn(
+            "Integrating Technology in Teaching and Learning Processes",
+            stored_skills,
+        )
+        self.assertNotIn("Matter knowledge", stored_skills)
+        self.assertNotIn("Processes", stored_skills)
 
     def test_results_page_filters_by_reviewer_decision(self):
         response = self.client.get("/screening_results?reviewer_status=Rejected")

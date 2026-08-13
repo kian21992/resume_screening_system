@@ -45,6 +45,7 @@ from app.services.recommender import (
     SKILL_ALIASES,
     analyze_preferred_skills,
     analyze_skills,
+    extract_resume_skills,
     estimate_decision_confidence,
     evaluate_candidate,
     generate_analysis_narrative,
@@ -1079,6 +1080,312 @@ class TestAnalyzeSkills(unittest.TestCase):
         self.assertIn("C#", matched)
 
 
+class TestExtractResumeSkills(unittest.TestCase):
+
+    def test_extracts_skills_not_required_by_job(self):
+        resume = """
+Technical Skills
+Python, Flask, Docker, Git
+Education
+Bachelor of Science in Computer Science
+"""
+        skills = extract_resume_skills(resume, additional_skills=["Python", "SQL"])
+
+        self.assertEqual(skills, ["Python", "Flask", "Docker", "Git"])
+        self.assertNotIn("SQL", skills)
+
+    def test_preserves_explicit_resume_wording_instead_of_alias_names(self):
+        resume = """
+Skills: JS, JavaScript, PostgreSQL, Postgres, MS Excel
+"""
+        skills = extract_resume_skills(resume)
+
+        self.assertEqual(
+            skills,
+            ["JS", "JavaScript", "PostgreSQL", "Postgres", "MS Excel"],
+        )
+
+    def test_preserves_long_competency_phrase_from_skills_section(self):
+        phrase = "Ability to organize, prioritize, and manage multiple classroom tasks"
+        communication = "Written and oral communication skills"
+        skills = extract_resume_skills(
+            f"Core Competencies\n{phrase}\n{communication}\nEducation"
+        )
+
+        self.assertIn(phrase, skills)
+        self.assertIn(communication, skills)
+        self.assertNotIn("communication skills", skills)
+
+    def test_splits_pdf_concatenated_competency_phrases(self):
+        skills = extract_resume_skills("""
+Skills
+Designs engaging lesson plans Communicates clearly with parents
+Leverages online platforms Adapts quickly to changing situations
+Education
+Bachelor of Education
+""")
+
+        self.assertEqual(skills, [
+            "Designs engaging lesson plans",
+            "Communicates clearly with parents",
+            "Leverages online platforms",
+            "Adapts quickly to changing situations",
+        ])
+
+    def test_category_labels_are_removed_and_parenthetical_commas_are_kept(self):
+        skills = extract_resume_skills("""
+Technical Skills
+Cloud Technologies  Amazon Web Services (EC2, SQS, RDS, IAM, S3)
+Frontend  JavaScript, HTML, CSS
+IDE s: Eclipse, IntelliJ IDEA
+Education
+Bachelor of Science
+""")
+
+        self.assertEqual(skills, [
+            "Amazon Web Services (EC2, SQS, RDS, IAM, S3)",
+            "JavaScript",
+            "HTML",
+            "CSS",
+            "Eclipse",
+            "IntelliJ IDEA",
+        ])
+
+    def test_inline_education_heading_stops_skill_section(self):
+        skills = extract_resume_skills("""
+Technical Skills: Python, SQL
+EDUCATION: Bachelor of Science, State University
+PROFESSIONAL TRAINING AND CERTIFICATIONS: AWS Practitioner
+""")
+
+        self.assertEqual(skills, ["Python", "SQL"])
+
+    def test_structural_separator_does_not_turn_following_list_into_one_skill(self):
+        skills = extract_resume_skills("""
+Technical Skills
+Software Development Life Cycle (SDLC) - Agile, SCRUM, Waterfall
+Education
+Bachelor of Science
+""")
+
+        self.assertEqual(skills, [
+            "Software Development Life Cycle (SDLC)",
+            "Agile",
+            "SCRUM",
+            "Waterfall",
+        ])
+
+    def test_wide_pdf_columns_keep_first_skill_and_technology_year(self):
+        skills = extract_resume_skills("""
+Technical Skills
+Python    Docker
+Operating Systems  Red Hat Linux 9, Unix/Linux, Windows 2000/NT/XP
+Education
+Bachelor of Science
+""")
+
+        self.assertEqual(skills, [
+            "Python",
+            "Docker",
+            "Red Hat Linux 9",
+            "Unix/Linux",
+            "Windows 2000/NT/XP",
+        ])
+
+    def test_very_long_explicit_competency_is_not_dropped(self):
+        phrase = (
+            "Ability to design inclusive learning activities and communicate "
+            "complex instructions clearly while coordinating with learners, "
+            "parents, teachers, administrators, and community stakeholders"
+        )
+        skills = extract_resume_skills(f"Skills\n{phrase}\nEducation")
+
+        self.assertEqual(skills, [phrase])
+
+    def test_skill_phrases_are_not_cut_at_action_words_or_product_hyphens(self):
+        skills = extract_resume_skills("""
+Skills & Qualities
+  Develop Lesson Plans
+Testing: Cucumber - JVM
+Skilful in Conflict Resolution, Risk Identification and Mitigation
+Education
+Bachelor of Education
+""")
+
+        self.assertEqual(skills, [
+            "Develop Lesson Plans",
+            "Testing",
+            "Cucumber - JVM",
+            "Skilful in Conflict Resolution, Risk Identification and Mitigation",
+        ])
+
+    def test_meaningful_labels_are_kept_but_category_labels_are_removed(self):
+        skills = extract_resume_skills("""
+Technical Skills
+Spring Framework: Spring Boot, Spring Security
+NoSQL: Cassandra, MongoDB
+Design Methodologies: UML, OOAD, Design Patterns
+IDEs / Tools  Eclipse, IntelliJ IDEA
+Project Management tools  JIRA, Trello, and SharePoint
+Education
+Bachelor of Science
+""")
+
+        self.assertEqual(skills, [
+            "Spring Framework",
+            "Spring Boot",
+            "Spring Security",
+            "NoSQL",
+            "Cassandra",
+            "MongoDB",
+            "UML",
+            "OOAD",
+            "Design Patterns",
+            "Eclipse",
+            "IntelliJ IDEA",
+            "JIRA",
+            "Trello",
+            "SharePoint",
+        ])
+
+    def test_pdf_wrapped_bullet_skills_are_reconstructed_before_splitting(self):
+        skills = extract_resume_skills("""
+SKILLS & QUALITIES
+  Curriculum and Subject
+Matter knowledge
+  Verbal and Written
+Communication Skills
+  Leadership
+Curriculum Implementation
+  Modifying Instructional
+Materials
+  Integrating Technology in
+Teaching and Learning
+Processes
+  Utilizing Various Teaching
+Strategies
+  Providing Interactive
+Activities/Game
+Curriculum Evaluation
+  Excellent in Formative and
+Summative Assessment
+Education
+Bachelor of Education
+""")
+
+        self.assertEqual(skills, [
+            "Curriculum and Subject Matter knowledge",
+            "Verbal and Written Communication Skills",
+            "Leadership",
+            "Curriculum Implementation",
+            "Modifying Instructional Materials",
+            "Integrating Technology in Teaching and Learning Processes",
+            "Utilizing Various Teaching Strategies",
+            "Providing Interactive Activities/Game",
+            "Curriculum Evaluation",
+            "Excellent in Formative and Summative Assessment",
+        ])
+
+    def test_combined_skills_qualities_and_interests_headings_are_supported(self):
+        qualities = extract_resume_skills("""
+Skills & Qualities
+Patient and dependable
+Clear written communication
+Education
+Bachelor of Education
+""")
+        interests = extract_resume_skills("""
+SKILLS / INTERESTS: Event Hosting, Theater Acting
+Work Experience
+Teacher
+""")
+
+        self.assertEqual(qualities, [
+            "Patient and dependable",
+            "Clear written communication",
+        ])
+        self.assertEqual(interests, ["Event Hosting", "Theater Acting"])
+
+    def test_contextual_skills_are_added_when_explicit_section_exists(self):
+        skills = extract_resume_skills("""
+Skills
+Python, Clear written communication
+Work Experience
+Built and deployed services using Docker and Kubernetes.
+Education
+Bachelor of Science in Information Technology
+""")
+
+        self.assertEqual(skills, [
+            "Python",
+            "Clear written communication",
+            "Docker",
+            "Kubernetes",
+        ])
+
+    def test_contextual_alias_is_not_duplicated_when_explicitly_listed(self):
+        skills = extract_resume_skills("""
+Skills: JS, Postgres
+Projects
+Created JavaScript dashboards backed by PostgreSQL.
+""", additional_skills=["JS", "PostgreSQL"])
+
+        self.assertEqual(skills, ["JS", "Postgres"])
+
+    def test_job_configured_alias_does_not_create_case_variant_duplicate(self):
+        skills = extract_resume_skills("""
+Skills: Communication Skills
+Work Experience
+Demonstrated strong communication skills when assisting clients.
+""", additional_skills=["Communication Skills"])
+
+        self.assertEqual(skills, ["Communication Skills"])
+
+    def test_negated_and_aspirational_context_skills_are_not_extracted(self):
+        skills = extract_resume_skills("""
+Professional Summary
+No experience with Docker. Interested in learning Kubernetes.
+Work Experience
+Developed Python services with Flask.
+""")
+
+        self.assertIn("Python", skills)
+        self.assertIn("Flask", skills)
+        self.assertNotIn("Docker", skills)
+        self.assertNotIn("Kubernetes", skills)
+
+    def test_education_only_technology_is_not_contextual_skill_evidence(self):
+        skills = extract_resume_skills("""
+Education
+Bachelor of Science in Information Technology
+Python Institute Certificate Program
+References
+Available upon request
+""")
+
+        self.assertNotIn("Python", skills)
+
+    def test_accepts_unknown_explicit_skill_but_not_resume_prose(self):
+        resume = """
+Core Competencies
+Records Classification
+Work Experience
+Managed records for Acme Corporation and prepared weekly reports.
+"""
+        skills = extract_resume_skills(resume)
+
+        self.assertIn("Records Classification", skills)
+        self.assertNotIn("Managed Records For Acme Corporation And Prepared Weekly Reports", skills)
+
+    def test_does_not_extract_negated_catalog_skill(self):
+        skills = extract_resume_skills(
+            "Professional Summary\nNo experience with Docker.\nSkills: Without Kubernetes"
+        )
+
+        self.assertNotIn("Docker", skills)
+        self.assertNotIn("Kubernetes", skills)
+
+
 # ===========================================================================
 # analyze_preferred_skills
 # ===========================================================================
@@ -1497,6 +1804,7 @@ class TestEvaluateCandidate(unittest.TestCase):
             "text_similarity_score", "fit_score", "recommendation_label",
             "confidence_level", "confidence_reason",
             "matched_skills", "missing_skills", "matched_preferred",
+            "extracted_skills",
             "matched_critical_skills", "missing_critical_skills",
             "summary", "decision_explanation", "contact_info", "extracted_edu", "extracted_exp",
             "total_exp_years",
@@ -1509,6 +1817,12 @@ class TestEvaluateCandidate(unittest.TestCase):
         result = self._run()
         self.assertEqual(sorted(result["matched_skills"]),
                          sorted(["Python", "SQL", "JavaScript"]))
+
+    def test_evaluation_returns_non_job_resume_skills_without_scoring_them(self):
+        result = self._run()
+
+        self.assertIn("Docker", result["extracted_skills"])
+        self.assertNotIn("Docker", result["matched_skills"])
         self.assertEqual(result["missing_skills"], [])
 
     def test_skill_score_100_when_all_matched(self):

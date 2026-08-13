@@ -10,7 +10,7 @@ from app.models import (
     RecommendationLog
 )
 from app.services.evidence import build_candidate_evidence
-from app.services.recommender import analyze_preferred_skills
+from app.services.recommender import analyze_preferred_skills, extract_resume_skills
 from app.utils.files import safe_delete_uploaded_file
 
 screening_bp = Blueprint('screening', __name__)
@@ -103,6 +103,7 @@ def result_detail(result_id):
     education = ExtractedEducation.query.filter_by(resume_id=resume.id).all()
     experience = ExtractedExperience.query.filter_by(resume_id=resume.id).all()
     certifications = ExtractedCertification.query.filter_by(resume_id=resume.id).all()
+    stored_skills = ExtractedSkill.query.filter_by(resume_id=resume.id).all()
     preferred_skills = [
         skill.strip() for skill in (job.preferred_skills or '').split(',')
         if skill.strip()
@@ -110,6 +111,20 @@ def result_detail(result_id):
     matched_preferred, _, _ = analyze_preferred_skills(
         resume.original_text, preferred_skills
     )
+    configured_skills = [
+        skill.strip()
+        for value in (job.required_skills, job.critical_skills, job.preferred_skills)
+        for skill in (value or '').split(',')
+        if skill.strip()
+    ]
+    # Re-extract on display so results created before this feature also show a
+    # complete list. Stored rows remain the source for newly uploaded resumes.
+    live_extracted_skills = extract_resume_skills(resume.original_text, configured_skills)
+    # Live extraction lets older screening records benefit from algorithm
+    # improvements. Stored rows are a fallback for an empty/unreadable section.
+    extracted_skills = live_extracted_skills or [
+        item.skill_name for item in stored_skills
+    ]
     candidate_evidence = build_candidate_evidence(
         resume_text=resume.original_text,
         matched_skills=result.get_matched_skills(),
@@ -131,6 +146,7 @@ def result_detail(result_id):
                            education=education,
                            experience=experience,
                            certifications=certifications,
+                           extracted_skills=extracted_skills,
                            candidate_evidence=candidate_evidence,
                            previous_result=previous_result,
                            next_result=next_result,

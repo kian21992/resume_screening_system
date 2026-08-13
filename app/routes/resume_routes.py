@@ -257,7 +257,9 @@ def process_resume_file(file, job):
         db.session.add(resume)
         db.session.flush()
 
-        for skill_name in evaluation['matched_skills']:
+        # Store the complete independently extracted skill inventory, not only
+        # the subset that matched this job's configured requirements.
+        for skill_name in evaluation['extracted_skills']:
             db.session.add(ExtractedSkill(resume_id=resume.id, skill_name=skill_name))
 
         for edu in evaluation['extracted_edu']:

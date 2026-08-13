@@ -38,6 +38,586 @@ SKILL_ALIASES = {
     "c sharp": ["c#"],
 }
 
+# Canonical, resume-independent vocabulary used by ``extract_resume_skills``.
+# Job skills are added to this vocabulary at evaluation time, but the extractor
+# does not depend on them: it can still identify skills that were never listed
+# in the job posting.
+RESUME_SKILL_CATALOG = {
+    "Python": ["python3", "python 3"],
+    "Java": [],
+    "JavaScript": ["js", "ecmascript", "es6"],
+    "TypeScript": [],
+    "C": [],
+    "C++": ["cpp"],
+    "C#": ["c sharp"],
+    "Go": ["golang"],
+    "R": [],
+    "PHP": [],
+    "Ruby": [],
+    "Kotlin": [],
+    "Swift": [],
+    "HTML": ["html5"],
+    "CSS": ["css3"],
+    "SQL": [],
+    "PostgreSQL": ["postgres", "postgre sql"],
+    "MySQL": [],
+    "SQLite": [],
+    "MongoDB": [],
+    "Oracle": [],
+    "Django": [],
+    "Flask": [],
+    "FastAPI": [],
+    "React": ["react.js", "reactjs"],
+    "Angular": [],
+    "Vue.js": ["vue", "vuejs"],
+    "Node.js": ["node", "nodejs"],
+    ".NET": ["dotnet", "asp.net"],
+    "Spring Boot": [],
+    "REST API": ["restful api", "rest apis", "restful services"],
+    "Git": [],
+    "GitHub": [],
+    "Docker": [],
+    "Kubernetes": ["k8s"],
+    "AWS": ["amazon web services"],
+    "Microsoft Azure": ["azure"],
+    "Google Cloud Platform": ["gcp", "google cloud"],
+    "Linux": [],
+    "DevOps": [],
+    "CI/CD": ["continuous integration", "continuous deployment"],
+    "Machine Learning": ["ml"],
+    "Artificial Intelligence": ["ai"],
+    "Natural Language Processing": ["nlp"],
+    "Deep Learning": [],
+    "Data Analysis": ["data analytics"],
+    "Data Visualization": [],
+    "Pandas": [],
+    "NumPy": ["numpy"],
+    "Scikit-learn": ["sklearn", "scikit learn"],
+    "TensorFlow": [],
+    "PyTorch": [],
+    "Power BI": ["powerbi"],
+    "Tableau": [],
+    "Microsoft Excel": ["ms excel", "excel"],
+    "Microsoft Office": ["ms office"],
+    "Project Management": [],
+    "Agile": [],
+    "Scrum": [],
+    "Communication": ["communication skills", "written and verbal communication"],
+    "Leadership": ["leadership skills"],
+    "Teamwork": ["team collaboration", "collaboration skills"],
+    "Problem Solving": ["problem-solving", "problem solving skills"],
+    "Critical Thinking": [],
+    "Time Management": [],
+    "Lesson Planning": SKILL_ALIASES["lesson planning"],
+    "Classroom Management": SKILL_ALIASES["classroom management"],
+    "Curriculum Development": ["curriculum design"],
+    "Teaching": ["instruction", "instructional delivery"],
+    "Assessment": ["student assessment", "learning assessment"],
+    "Differentiated Instruction": [],
+    "Research": ["research skills"],
+    "Counseling": ["counselling"],
+    "Case Management": [],
+    "Customer Service": ["customer support"],
+    "Technical Support": ["it support"],
+    "Accounting": [],
+    "Bookkeeping": [],
+    "Payroll": [],
+    "Recruitment": ["recruiting", "talent acquisition"],
+    "Human Resources": ["hr management"],
+}
+
+_SKILL_SECTION_HEADER_RE = _re.compile(
+    r"^\s*(?:technical\s+skills?|professional\s+skills?|personal\s+skills?"
+    r"|key\s+skills?|relevant\s+skills?|special\s+skills?|skills?"
+    r"|skills?\s*(?:&|and|/)\s*(?:competenc(?:y|ies)|abilities|qualities"
+    r"|attributes?|strengths?|interests?|expertise)"
+    r"|skills?\s+highlights?|knowledge,?\s+skills?\s+and\s+abilities"
+    r"|core\s+competenc(?:y|ies)|competenc(?:y|ies)|areas?\s+of\s+expertise"
+    r"|technical\s+proficienc(?:y|ies)|technologies|tools)\s*"
+    r"(?::\s*(?P<content>.*))?$",
+    _re.IGNORECASE,
+)
+_NON_SKILL_SECTION_RE = _re.compile(
+    r"^\s*(?:objective|career\s+objective|summary|profile|professional\s+summary"
+    r"|education(?:al\s+(?:background|attainment))?|academic\s+background"
+    r"|academic\s+(?:credentials?|qualifications?)|educational\s+qualifications?"
+    r"|work\s+experience|professional\s+experience|experience"
+    r"|employment(?:\s+history)?|projects?|certifications?|licenses?|trainings?"
+    r"|professional\s+trainings?(?:\s+and\s+certifications?)?"
+    r"|seminars?|awards?|achievements?|references?|personal\s+(?:information|data)"
+    r"|interests?|activities|affiliations?|publications?|volunteer(?:ing)?(?:\s+experience)?"
+    r"|organizations?|professional\s+development)"
+    r"(?:\s*:\s*.*)?\s*$",
+    _re.IGNORECASE,
+)
+_SKILL_CATEGORY_RE = _re.compile(
+    r"^(?:programming\s+languages?|languages?|frameworks?|libraries|databases?"
+    r"|cloud(?:\s+platforms?)?|platforms?|software|applications?|methodologies"
+    r"|soft\s+skills?|hard\s+skills?|technical|laboratory|others?|tools"
+    r"|additional\s+skills?"
+    r"|java(?:/j2ee)?\s+technologies|web\s+(?:technologies|development)"
+    r"|xml\s+(?:technologies|processing)|design\s+(?:patterns?|methodologies)"
+    r"|methodologies/design\s+patterns?"
+    r"|operating\s+systems?|version\s+control|cloud\s+technologies"
+    r"|testing(?:\s+and\s+logging)?\s+(?:frameworks?|tools?|technologies)"
+    r"|database\s+technologies|messaging\s+tech(?:nologies|ologies)"
+    r"|ide\s*s(?:\s*/\s*tools?)?)\s*$",
+    _re.IGNORECASE,
+)
+_SKILL_CATEGORY_PREFIX_RE = _re.compile(
+    r"^(?:programming\s+languages?|mark-up/xml\s+technologies|tools?\s*&\s*frameworks?"
+    r"|java\s+technologies|web\s+technologies|xml\s+technologies|build\s+(?:tools?|automation)"
+    r"|web\s+services?|cloud\s+technologies|application/web\s+servers?"
+    r"|web/app\s+servers?|application\s+servers?|web\s+servers?|databases?(?:\s+and\s+tools?)?"
+    r"|ide(?:s)?\s*/\s*tools?|ide(?:s|\s*s|\s+tools?)"
+    r"|operating\s+systems?|design\s+patterns?"
+    r"|testing\s+(?:frameworks?|tools?|technologies)(?:\s*/\s*others?)?"
+    r"|version\s+control(?:\s+tools?)?"
+    r"|change\s+management\s+tools?|scripting(?:/gui)?\s+tools?"
+    r"|modeling/\s*case\s+tools?|reporting\s+tools?|designing\s+tools?"
+    r"|big\s+data\s+ecosystem|frameworks?"
+    r"|orm(?:\s+technologies)?|messaging\s+(?:systems?|tech(?:nologies|ologies))"
+    r"|routing\s+technologies|caching\s+technologies|development\s+methodologies"
+    r"|methodologies/design\s+patterns?|os\s*&\s*environment|additional\s+skills?"
+    r"|web\s+service\s+specifications\s+and\s+implementations"
+    r"|project\s+management\s+tools?|manual\s+test\s*&\s*automation\s+tools?"
+    r"|release\s*&\s*deployment\s+tools?|frontend|db|platforms?|domain"
+    r"|soft\s+skills?|hard\s+skills?|tools?)"
+    r"\s*(?::|\s{2,}|\t|\s+(?=(?-i:[A-Z0-9])|[.#/+]))\s*",
+    _re.IGNORECASE,
+)
+_CONCATENATED_SKILL_START_RE = _re.compile(
+    r"(?<=[a-z0-9)])\s+(?=(?:Ability\s+to|Adapts?|Applies|Collaborates?|Communicates?"
+    r"|Creates?|Demonstrates?|Designs?|Develops?|Facilitates?|Implements?|Leads?"
+    r"|Leverages?|Maintains?|Manages?|Organizes?|Performs?|Plans?|Possesses?"
+    r"|Prepares?|Provides?|Skilled\s+in|Proficient\s+in|Strong\s+knowledge\s+of)"
+    r"\b(?=\s+[a-z]))"
+)
+_COMPETENCY_PHRASE_RE = _re.compile(
+    r"^(?:Ability\s+to|Adapts?|Applies|Collaborates?|Communicates?|Creates?"
+    r"|Demonstrates?|Designs?|Develops?|Facilitates?|Implements?|Leads?|Leverages?"
+    r"|Maintains?|Manages?|Organizes?|Performs?|Plans?|Possesses?|Prepares?"
+    r"|Provides?|Conducts?|Skill(?:ed|ful)|Skilful|Proficient\s+in|Strong\b"
+    r"|Excellent\b|Effective\b|Knowledge\b|Experienced?\b"
+    r"|Expertise\b|Extensive\s+expertise|Familiar\b|Highly\s+capable"
+    r"|Well\s+acquainted|Solid\s+understanding|High\s+degree|Good\s+knowledge"
+    r"|Acted\s+as)\b",
+    _re.IGNORECASE,
+)
+_NEGATED_SKILL_RE = _re.compile(
+    r"\b(?:no|not|without|lack(?:s|ing)?|unfamiliar\s+with)\b[^.;:]{0,35}$",
+    _re.IGNORECASE,
+)
+_ASPIRATIONAL_SKILL_RE = _re.compile(
+    r"\b(?:interested\s+in|willing\s+to|eager\s+to|hoping\s+to|seeking\s+to|"
+    r"would\s+like\s+to|currently\s+learning|planning\s+to\s+learn|"
+    r"want(?:s|ing)?\s+to\s+learn)\b[^.;:]{0,50}$",
+    _re.IGNORECASE,
+)
+_CONTEXT_EXCLUDED_HEADER_RE = _re.compile(
+    r"^\s*(?:education(?:al\s+(?:background|attainment|qualifications?))?"
+    r"|academic\s+(?:background|credentials?|qualifications?)"
+    r"|personal\s+(?:information|data|details)|references?|interests?|hobbies"
+    r"|awards?|achievements?|affiliations?|publications?)"
+    r"(?:\s*:\s*.*)?\s*$",
+    _re.IGNORECASE,
+)
+_CONTEXT_INCLUDED_HEADER_RE = _re.compile(
+    r"^\s*(?:objective|career\s+objective|summary|profile|professional\s+summary"
+    r"|work\s+experience|professional\s+experience|teaching\s+experience"
+    r"|employment(?:\s+history)?|experience|projects?|certifications?|licenses?"
+    r"|trainings?|seminars?|professional\s+development)"
+    r"(?:\s*:\s*.*)?\s*$",
+    _re.IGNORECASE,
+)
+
+
+def _resume_skill_vocabulary(additional_skills=None):
+    vocabulary = {
+        canonical: list(dict.fromkeys([canonical, *aliases]))
+        for canonical, aliases in RESUME_SKILL_CATALOG.items()
+    }
+    for raw_skill in additional_skills or []:
+        skill = (raw_skill or "").strip()
+        if not skill:
+            continue
+        skill_lower = skill.lower()
+        existing = next(
+            (
+                name for name, variants in vocabulary.items()
+                if name.lower() == skill_lower
+                or any(variant.lower() == skill_lower for variant in variants)
+            ),
+            None,
+        )
+        if existing:
+            vocabulary[existing] = list(dict.fromkeys([
+                *vocabulary[existing],
+                skill,
+                *SKILL_ALIASES.get(skill_lower, []),
+            ]))
+            continue
+        aliases = SKILL_ALIASES.get(skill_lower, [])
+        vocabulary[skill] = list(dict.fromkeys([skill, *aliases]))
+    return vocabulary
+
+
+def _variant_matches(line, variant):
+    flags = 0 if len(variant.strip()) == 1 else _re.IGNORECASE
+    if _re.search(r"[^a-z0-9\s]", variant, _re.I):
+        pattern = _re.escape(variant)
+    else:
+        words = variant.split()
+        pattern = r"\b" + r"\s+".join(_re.escape(word) for word in words) + r"\b"
+    return _re.finditer(pattern, line, flags)
+
+
+def _positive_skill_mention(text, variants):
+    """Return the resume's exact skill wording outside nearby negation."""
+    for line in (text or "").splitlines():
+        for variant in sorted(variants, key=len, reverse=True):
+            for match in _variant_matches(line, variant):
+                prefix = line[:match.start()]
+                if (
+                    not _NEGATED_SKILL_RE.search(prefix)
+                    and not _ASPIRATIONAL_SKILL_RE.search(prefix)
+                ):
+                    return match.group(0)
+    return None
+
+
+def _contextual_skill_text(text):
+    """Return resume areas that can support an inferred skill claim.
+
+    Explicit skill sections are handled separately. Education, personal data,
+    references, hobbies, awards, and publications are excluded so a technology
+    in a degree title or an interest is not automatically treated as applied
+    competence. Unheaded text remains available for non-template resumes.
+    """
+    included = True
+    lines = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _SKILL_SECTION_HEADER_RE.match(line):
+            included = False
+            continue
+        if _CONTEXT_EXCLUDED_HEADER_RE.match(line):
+            included = False
+            continue
+        if _CONTEXT_INCLUDED_HEADER_RE.match(line):
+            included = True
+            # Inline content after a recognized heading may contain evidence.
+            inline = line.split(":", 1)[1].strip() if ":" in line else ""
+            if inline:
+                lines.append(inline)
+            continue
+        if included:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _catalog_skills_covered_by_explicit_items(items, vocabulary):
+    """Map explicit resume wording to canonical IDs for alias deduplication."""
+    covered = set()
+    for item in items:
+        item_lower = item.lower()
+        for canonical, variants in vocabulary.items():
+            if any(
+                _literal_skill_found(item_lower, variant.lower())
+                for variant in variants
+            ):
+                covered.add(canonical.lower())
+    return covered
+
+
+def _valid_section_skill(value):
+    # Explicit skill sections are trusted more than narrative text. Long
+    # competency statements are valid resume skills and technology versions
+    # may contain years (for example "Windows 2000/NT/XP"), so neither should
+    # be rejected here.
+    if not value or len(value) > 300 or len(value.split()) > 50:
+        return False
+    if _re.search(r"(?:@|https?://|www\.)", value, _re.I):
+        return False
+    if _re.fullmatch(r"[\W\d_]+", value):
+        return False
+    if _re.match(r"(?i)^(?:for|and|or|to|including|catering\s+to)\b", value):
+        return False
+    return True
+
+
+def _split_top_level_skill_items(value):
+    """Split list delimiters while preserving commas inside parentheses."""
+    value = value.strip()
+    if not value:
+        return []
+    competency_phrase = bool(_COMPETENCY_PHRASE_RE.match(value))
+    structural_items = []
+    current = []
+    depth = 0
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char in "([{" :
+            depth += 1
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+
+        wide_space = char.isspace() and (
+            char == "\t" or (index + 1 < len(value) and value[index + 1].isspace())
+        ) and not (index > 0 and value[index - 1] in ",;:")
+        spaced_hyphen = (
+            char == "-" and index > 0 and index + 1 < len(value)
+            and value[index - 1].isspace() and value[index + 1].isspace()
+            and (
+                "," in value[index + 1:]
+                or len(value[:index].split()) >= 4
+            )
+        )
+        delimiter = depth == 0 and (
+            char in "|•·" or (char == ";" and not competency_phrase)
+            or wide_space or spaced_hyphen
+        )
+        if delimiter:
+            item = "".join(current).strip(" -*•|,;:")
+            if item:
+                structural_items.append(item)
+            current = []
+            if wide_space:
+                while index + 1 < len(value) and value[index + 1].isspace():
+                    index += 1
+        else:
+            current.append(char)
+        index += 1
+    item = "".join(current).strip(" -*•|,;:")
+    if item:
+        structural_items.append(item)
+
+    items = []
+    for structural_item in structural_items:
+        first_words = len(structural_item.split(",", 1)[0].split())
+        comma_phrase = bool(
+            _COMPETENCY_PHRASE_RE.match(structural_item)
+            or (
+                _re.search(r",\s*(?:and|or)\b", structural_item, _re.I)
+                and first_words >= 2
+            )
+        )
+        if comma_phrase or "," not in structural_item:
+            items.append(structural_item)
+            continue
+
+        current = []
+        depth = 0
+        for char in structural_item:
+            if char in "([{" :
+                depth += 1
+            elif char in ")]}":
+                depth = max(0, depth - 1)
+            if char == "," and depth == 0:
+                item = _re.sub(
+                    r"^(?:and|or)\s+", "", "".join(current).strip(" ,"),
+                    flags=_re.IGNORECASE,
+                )
+                if item:
+                    items.append(item)
+                current = []
+            else:
+                current.append(char)
+        item = _re.sub(
+            r"^(?:and|or)\s+", "", "".join(current).strip(" ,"),
+            flags=_re.IGNORECASE,
+        )
+        if item:
+            items.append(item)
+    return items
+
+
+def _skill_section_items(line):
+    """Return display-ready items from one explicit skill-section row."""
+    line = _re.sub(r"^\s*[-*•·\uf06c\uf0b7]\s*", "", line or "").strip()
+    if not line:
+        return []
+
+    # Remove a wide first column only when it is a recognized category. A
+    # generic rule would lose real skills in rows such as "Python    Docker".
+    wide_columns = [part.strip() for part in _re.split(r"\t+|\s{2,}", line) if part.strip()]
+    if (
+        len(wide_columns) >= 2
+        and (
+            _SKILL_CATEGORY_RE.fullmatch(wide_columns[0])
+            or _SKILL_CATEGORY_PREFIX_RE.fullmatch(wide_columns[0])
+        )
+    ):
+        line = "  ".join(wide_columns[1:])
+
+    labelled = _re.match(r"^([^:]{1,55}):\s*(.+)$", line)
+    if labelled and len(labelled.group(1).split()) <= 6:
+        label = labelled.group(1).strip()
+        content = labelled.group(2).strip()
+        if (
+            _SKILL_CATEGORY_RE.fullmatch(label)
+            or _SKILL_CATEGORY_PREFIX_RE.fullmatch(label)
+        ):
+            line = content
+        else:
+            # Labels such as "Spring Framework" and "NoSQL" are themselves
+            # skills; retain them alongside the values that follow.
+            line = f"{label}, {content}"
+    else:
+        line = _SKILL_CATEGORY_PREFIX_RE.sub("", line, count=1).strip()
+    if not line or _SKILL_CATEGORY_RE.fullmatch(line):
+        return []
+
+    # Some visually separated PDF columns are flattened onto one line. Resume
+    # competency sentences commonly reveal the lost boundary through a new
+    # capitalized action phrase ("... curriculum Communicates clearly ...").
+    chunks = _CONCATENATED_SKILL_START_RE.split(line)
+    items = []
+    for chunk in chunks:
+        items.extend(_split_top_level_skill_items(chunk))
+    return [item for item in items if _valid_section_skill(item)]
+
+
+_SKILL_BULLET_RE = _re.compile(r"^\s*[-*•·\uf06c\uf0b7]\s*")
+_WRAPPED_SKILL_PREFIX_RE = _re.compile(
+    r"^(?:curriculum\s+and|verbal\s+and|modifying\b|integrating\b|utilizing\b"
+    r"|providing\b|excellent\s+in\b)",
+    _re.IGNORECASE,
+)
+_WRAPPED_SKILL_END_RE = _re.compile(
+    r"\b(?:and|or|of|in|for|with|to|subject|written|instructional|interactive"
+    r"|teaching|formative)\s*$",
+    _re.IGNORECASE,
+)
+
+
+def _should_join_wrapped_skill(previous, continuation, joined_lines=0):
+    """Detect a PDF-wrapped continuation of an explicit bullet item."""
+    previous = _SKILL_BULLET_RE.sub("", previous or "").strip()
+    continuation = (continuation or "").strip()
+    if not previous or not continuation or len(continuation.split()) > 5:
+        return False
+    if _SKILL_SECTION_HEADER_RE.match(continuation) or _NON_SKILL_SECTION_RE.match(continuation):
+        return False
+    if _WRAPPED_SKILL_END_RE.search(previous):
+        return True
+    if not _WRAPPED_SKILL_PREFIX_RE.match(previous):
+        return False
+    # Most wrapped bullets use one continuation line. Phrases beginning with
+    # "Integrating" commonly wrap across two ("... Teaching and Learning" +
+    # "Processes"). Limiting depth prevents the next standalone skill from
+    # being swallowed after the phrase is complete.
+    max_joined_lines = 2 if _re.match(r"(?i)^integrating\b", previous) else 1
+    return joined_lines < max_joined_lines
+
+
+def extract_resume_skills(resume_text, additional_skills=None):
+    """Extract a resume-worded skill inventory independently of job matching.
+
+    Every clean item in an explicit skills/competencies section is preserved as
+    written, including longer competency phrases and skills outside the built-in
+    vocabulary. Elsewhere, vocabulary-backed mentions are returned using their
+    actual resume wording. Alias normalization remains internal to job matching.
+    The returned list is informational and does not affect scoring.
+    """
+    text = resume_text or ""
+    vocabulary = _resume_skill_vocabulary(additional_skills)
+    extracted = []
+    seen = set()
+
+    def add(value):
+        normalized = _re.sub(r"\s+", " ", (value or "")).strip(" -*•|,;:.")
+        key = normalized.lower()
+        if normalized and key not in seen:
+            seen.add(key)
+            extracted.append(normalized)
+
+    def add_section_line(value):
+        for part in _skill_section_items(value):
+            if _re.match(
+                r"(?i)^(?:no|not|without|lack(?:s|ing)?|unfamiliar\s+with)\b",
+                part,
+            ):
+                continue
+            add(part)
+
+    in_skill_section = False
+    pending_bullet = None
+    pending_joined_lines = 0
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        header = _SKILL_SECTION_HEADER_RE.match(line)
+        if header:
+            if pending_bullet:
+                add_section_line(pending_bullet)
+                pending_bullet = None
+                pending_joined_lines = 0
+            in_skill_section = True
+            line = (header.group("content") or "").strip()
+            if not line:
+                continue
+        elif in_skill_section and _NON_SKILL_SECTION_RE.match(line):
+            if pending_bullet:
+                add_section_line(pending_bullet)
+                pending_bullet = None
+                pending_joined_lines = 0
+            in_skill_section = False
+            continue
+        if not in_skill_section:
+            continue
+        if not line:
+            if pending_bullet:
+                add_section_line(pending_bullet)
+                pending_bullet = None
+                pending_joined_lines = 0
+            continue
+
+        is_bullet = bool(_SKILL_BULLET_RE.match(line))
+        if is_bullet:
+            if pending_bullet:
+                add_section_line(pending_bullet)
+            pending_bullet = line
+            pending_joined_lines = 0
+            continue
+
+        if pending_bullet:
+            if _should_join_wrapped_skill(
+                pending_bullet, line, pending_joined_lines
+            ):
+                pending_bullet = f"{pending_bullet} {line}"
+                pending_joined_lines += 1
+                continue
+            add_section_line(pending_bullet)
+            pending_bullet = None
+            pending_joined_lines = 0
+        add_section_line(line)
+
+    if pending_bullet:
+        add_section_line(pending_bullet)
+
+    # Add catalog-backed skills evidenced outside the explicit skill section.
+    # Canonical IDs are used only for deduplication; display text always uses
+    # the wording found in the resume.
+    contextual_text = _contextual_skill_text(text)
+    covered_catalog_skills = _catalog_skills_covered_by_explicit_items(
+        extracted, vocabulary
+    )
+    for canonical, variants in vocabulary.items():
+        if canonical.lower() in covered_catalog_skills:
+            continue
+        mention = _positive_skill_mention(contextual_text, variants)
+        if mention and not any(
+            mention.lower() in listed_skill.lower()
+            or listed_skill.lower() in mention.lower()
+            for listed_skill in extracted
+        ):
+            add(mention)
+
+    return extracted
+
 
 def _skill_variants(skill):
     normalized = skill.strip().lower()
@@ -766,6 +1346,10 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
     matched_preferred, total_preferred, preferred_bonus = analyze_preferred_skills(
         resume_text, preferred_skills or []
     )
+    extracted_skills = extract_resume_skills(
+        resume_text,
+        [*(required_skills or []), *(critical_skills or []), *(preferred_skills or [])],
+    )
 
     # 3. Extract contact info, education, experience
     contact_info = extract_contact_info(resume_text)
@@ -906,6 +1490,7 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         "matched_critical_skills": matched_critical_skills,
         "missing_critical_skills": missing_critical_skills,
         "matched_preferred": matched_preferred,
+        "extracted_skills": extracted_skills,
         "summary": summary,
         "decision_explanation": decision_explanation,
         "contact_info": contact_info,
