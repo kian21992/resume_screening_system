@@ -17,6 +17,11 @@ import re as _re
 import hashlib
 from rapidfuzz import fuzz
 from nltk.stem import PorterStemmer
+from app.services.education_domain import (
+    classify_combined_heading,
+    classify_section_heading,
+    education_skill_vocabulary,
+)
 
 _STEMMER = PorterStemmer()
 
@@ -245,6 +250,11 @@ def _resume_skill_vocabulary(additional_skills=None):
         canonical: list(dict.fromkeys([canonical, *aliases]))
         for canonical, aliases in RESUME_SKILL_CATALOG.items()
     }
+    for canonical, variants in education_skill_vocabulary().items():
+        vocabulary[canonical] = list(dict.fromkeys([
+            *vocabulary.get(canonical, []),
+            *variants,
+        ]))
     for raw_skill in additional_skills or []:
         skill = (raw_skill or "").strip()
         if not skill:
@@ -332,10 +342,19 @@ def _catalog_skills_covered_by_explicit_items(items, vocabulary):
     for item in items:
         item_lower = item.lower()
         for canonical, variants in vocabulary.items():
-            if any(
+            literal_match = any(
                 _literal_skill_found(item_lower, variant.lower())
                 for variant in variants
-            ):
+            )
+            canonical_stems = {
+                stem for stem in _stem_tokens(canonical)
+                if len(stem) >= 4
+            }
+            stem_match = bool(
+                canonical_stems
+                and canonical_stems.issubset(set(_stem_tokens(item)))
+            )
+            if literal_match or stem_match:
                 covered.add(canonical.lower())
     return covered
 
@@ -536,9 +555,16 @@ def extract_resume_skills(resume_text, additional_skills=None):
     extracted = []
     seen = set()
 
+    def dedupe_key(value):
+        tokens = _re.findall(r"[a-z0-9+#.]+", value.lower())
+        # These suffixes describe an item rather than distinguish the skill.
+        while tokens and tokens[-1] in {"skill", "skills", "proficiency"}:
+            tokens.pop()
+        return " ".join(tokens)
+
     def add(value):
         normalized = _re.sub(r"\s+", " ", (value or "")).strip(" -*•|,;:.")
-        key = normalized.lower()
+        key = dedupe_key(normalized)
         if normalized and key not in seen:
             seen.add(key)
             extracted.append(normalized)
@@ -552,22 +578,55 @@ def extract_resume_skills(resume_text, additional_skills=None):
                 continue
             add(part)
 
+    # Combined sections often keep skills on an inline labelled bullet rather
+    # than under a standalone SKILLS heading. Capture that list and its wrapped
+    # continuation lines independently of the surrounding section title.
+    text_lines = text.splitlines()
+    for index, raw_line in enumerate(text_lines):
+        labelled = _re.match(
+            r"(?i)^\s*[-*•▪\u2022\u25aa]?\s*skills?\s*:\s*(.+)$",
+            raw_line.strip(),
+        )
+        if not labelled:
+            continue
+        value = labelled.group(1).strip()
+        for lookahead in range(index + 1, min(len(text_lines), index + 3)):
+            continuation = text_lines[lookahead].strip()
+            if not continuation or _re.match(
+                r"(?i)^\s*[-*•▪\u2022\u25aa]?\s*(?:skills?|certifications?|awards?)\s*:",
+                continuation,
+            ) or _NON_SKILL_SECTION_RE.match(continuation):
+                break
+            if _SKILL_BULLET_RE.match(continuation):
+                break
+            value += " " + continuation
+        add_section_line(value)
+
     in_skill_section = False
     pending_bullet = None
     pending_joined_lines = 0
     for raw_line in text.splitlines():
         line = raw_line.strip()
         header = _SKILL_SECTION_HEADER_RE.match(line)
-        if header:
+        domain_sections = classify_combined_heading(line)
+        domain_skill_header = (
+            domain_sections == ["skills"]
+            and not _re.search(r":\s*\S", line)
+        )
+        domain_boundary = classify_section_heading(line)
+        if header or domain_skill_header:
             if pending_bullet:
                 add_section_line(pending_bullet)
                 pending_bullet = None
                 pending_joined_lines = 0
             in_skill_section = True
-            line = (header.group("content") or "").strip()
+            line = (header.group("content") or "").strip() if header else ""
             if not line:
                 continue
-        elif in_skill_section and _NON_SKILL_SECTION_RE.match(line):
+        elif in_skill_section and (
+            _NON_SKILL_SECTION_RE.match(line)
+            or (domain_boundary and domain_boundary != "skills")
+        ):
             if pending_bullet:
                 add_section_line(pending_bullet)
                 pending_bullet = None

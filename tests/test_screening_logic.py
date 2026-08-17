@@ -389,6 +389,55 @@ May, 2017 to Till Date
 
 class TestExtractContactInfo(unittest.TestCase):
 
+    def test_anonymized_teacher_candidate_does_not_use_skill_as_name(self):
+        sample = """
+Teacher Candidate 2
+Summary
+Enthusiastic teacher effective at fostering a positive learning environment.
+Skills
+Critical thinker
+Calm under pressure
+Education
+Masters: Teaching
+"""
+        contact = extract_contact_info(sample)
+
+        self.assertEqual(contact["name"], "Unknown Candidate")
+
+    def test_document_format_word_is_not_used_as_candidate_name(self):
+        sample = """
+Word
+word@example.com
+
+Professional Summary
+Experienced applicant with strong communication and organizational skills.
+"""
+        contact = extract_contact_info(sample)
+
+        self.assertEqual(contact["name"], "Unknown Candidate")
+
+    def test_name_split_across_pdf_header_lines_beats_narrative_phrase(self):
+        sample = """
+LETICIA
+AKILAL
+Recherche d'un contrat d'apprentissage en IT dans le cadre
+d'une L3 MIAGE
+E-mail : akilallaeticia@gmail.com
+"""
+        contact = extract_contact_info(sample)
+
+        self.assertEqual(contact["name"], "Leticia Akilal")
+
+    def test_doubled_pdf_glyphs_are_collapsed_in_candidate_name(self):
+        sample = """
+BBOORRHHAANN GGHHEENNNNAAII
+TTEECCHHNNIICCIIEENN SSUUPPÉÉRRIIEEUURR
+borhan.g@live.fr
+"""
+        contact = extract_contact_info(sample)
+
+        self.assertEqual(contact["name"], "Borhan Ghennai")
+
     def test_pdf_split_first_name_is_merged_using_email_identity(self):
         sample = """
 Name: Abi ral Pandey
@@ -867,6 +916,38 @@ Pampanga Colleges
 
 class TestCertificationPrecision(unittest.TestCase):
 
+    def test_combined_heading_and_inline_certification_list(self):
+        sample = """
+CERTIFICATIONS, SKILLS & AWARDS
+Skills: Customer Service; Communication; Teamwork
+Certifications: Certificate of Completion in Introduction to Food and Beverage Services; Standard First Aid and BLS CPR/AED Training; Microcertificate of Completion in Customer Centricity
+Awards: Graduated Senior High School With High Honors
+"""
+        records = extract_certifications(sample)
+
+        self.assertEqual([record["certification_name"] for record in records], [
+            "Certificate of Completion in Introduction to Food and Beverage Services",
+            "Standard First Aid and BLS CPR/AED Training",
+            "Microcertificate of Completion in Customer Centricity",
+        ])
+
+    def test_french_languages_section_stops_certification_capture(self):
+        sample = """
+CERTIFICATIONS
+CISCO 2025
+Cyber Sécurité niveau 1
+LANGUES
+Français
+Anglais
+AHOUNOU Evrard
+"""
+        records = extract_certifications(sample)
+
+        self.assertEqual(
+            [record["certification_name"] for record in records],
+            ["CISCO", "Cyber Sécurité niveau 1"],
+        )
+
     def test_certification_section_stops_at_uncommon_resume_section(self):
         sample = """
 Certifications
@@ -891,6 +972,12 @@ Certified Scrum Master with 10 years of project management experience.
 
 
 class TestDocxExtraction(unittest.TestCase):
+
+    def test_cleaner_removes_adjacent_duplicate_lines(self):
+        raw = "Skills\nClassroom Management\n  classroom   management  \nEducation"
+        cleaned = _clean_extracted_text(raw)
+
+        self.assertEqual(cleaned, "Skills\nClassroom Management\nEducation")
 
     def test_header_and_body_tables_preserve_reading_order(self):
         import docx
@@ -1081,6 +1168,44 @@ class TestAnalyzeSkills(unittest.TestCase):
 
 
 class TestExtractResumeSkills(unittest.TestCase):
+
+    def test_extracts_wrapped_inline_skills_from_combined_section(self):
+        skills = extract_resume_skills("""
+CERTIFICATIONS, SKILLS & AWARDS
+▪ Skills: Customer Service; Communication; Teamwork; Problem-Solving; Attention to
+Detail; Event Coordination; Sanitation Practices
+▪ Certifications: Standard First Aid
+▪ Awards: High Honors
+""")
+
+        self.assertEqual(skills, [
+            "Customer Service", "Communication", "Teamwork", "Problem-Solving",
+            "Attention to Detail", "Event Coordination", "Sanitation Practices",
+        ])
+
+    def test_richer_explicit_communication_phrase_blocks_generic_duplicate(self):
+        skills = extract_resume_skills("""
+Skills
+Communicates clearly in written and verbal contexts
+Education
+Bachelor of Education
+Work Experience
+Communicated with parents and students daily.
+""")
+
+        self.assertIn("Communicates clearly in written and verbal contexts", skills)
+        self.assertNotIn("communication skills", [skill.lower() for skill in skills])
+
+    def test_generic_skill_suffix_does_not_create_duplicate(self):
+        skills = extract_resume_skills("""
+Skills
+Problem Solving
+Problem-Solving Skills
+Education
+Bachelor of Education
+""")
+
+        self.assertEqual(skills, ["Problem Solving"])
 
     def test_extracts_skills_not_required_by_job(self):
         resume = """
@@ -2315,6 +2440,71 @@ class TestCertificationExtraction(unittest.TestCase):
 
 
 class TestLocalResumeExtractionRegressions(unittest.TestCase):
+    def test_malformed_partial_experience_rows_are_discarded(self):
+        text = """WORK EXPERIENCES
+On-field Staff (Work Immersion)
+Central Luzon Drug Rehabilitation Center
+Sto. Nino, Pampanga
+(A.Y. 2018-2019)
+Faculty Member (Teacher)
+Holy Child of Mary College Inc.
+(S.Y. 2024-2025)
+EDUCATION
+Bachelor of Education
+"""
+        records = extract_experience_records(text)
+
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(not record["company"].startswith("(") for record in records))
+
+    def test_compact_education_layout_returns_one_row_per_school(self):
+        text = """EDUCATION
+Far Eastern University-Manila 2023-Present
+Bachelor of Science in Nursing Metro Manila
+National University 2021-2023
+Senior High School Baliwag, Bulacan
+Emigdio A. Bondoc High School 2017-2021
+Junior High School San Luis, Pampanga
+CERTIFICATIONS, SKILLS & AWARDS
+Awards: Graduated Senior High School With High Honors
+"""
+        records = extract_education(text)
+
+        self.assertEqual(len(records), 3)
+        self.assertEqual(records[0]["institution"], "Far Eastern University")
+        self.assertEqual(records[1], {
+            "degree": "Senior High School",
+            "institution": "National University",
+        })
+        self.assertEqual(records[2], {
+            "degree": "Junior High School",
+            "institution": "Emigdio A. Bondoc High School",
+        })
+
+    def test_company_date_then_role_location_layout(self):
+        text = """WORK EXPERIENCE
+Far Eastern University - Manila 2024-Present
+Student Nurse Manila, Philippines
+- Provided quality patient care.
+Far Eastern University-Manila 2023-2025
+Volunteer Manila, Philippines
+- Organized community events.
+Far Eastern University-Manila 2023
+NSTP Volunteer Bistek Ville 5, Payatas, Quezon City
+- Supported outreach activities.
+PROJECTS
+Research Project
+"""
+        records = extract_experience_records(text)
+
+        self.assertEqual(len(records), 3)
+        self.assertEqual(records[0]["job_title"], "Student Nurse")
+        self.assertEqual(records[0]["company"], "Far Eastern University - Manila")
+        self.assertEqual(records[0]["location"], "Manila, Philippines")
+        self.assertEqual(records[1]["job_title"], "Volunteer")
+        self.assertEqual(records[2]["job_title"], "NSTP Volunteer")
+        self.assertEqual(records[2]["years"], 1.0)
+
     def test_deans_lister_is_never_work_experience(self):
         text = """ACHIEVEMENTS
 DEAN'S LISTER

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "teacher_standard_sections",
+    "text": "MARIA REYES\nSKILLS\nLesson Planning; Classroom Management; Differentiated Instruction\nTEACHING EXPERIENCE\nEnglish Teacher\nSan Isidro National High School\nJune 2020 - May 2024\nPrepared lessons and assessed student progress.\nEDUCATION\nBachelor of Secondary Education major in English\nPampanga State University\nCERTIFICATIONS\nLicensed Professional Teacher",
+    "expected_skills": ["Lesson Planning", "Classroom Management", "Differentiated Instruction"],
+    "expected_roles": ["English Teacher"],
+    "expected_education_count": 1
+  },
+  {
+    "id": "combined_compact_sections",
+    "text": "JUAN SANTOS\nWORK EXPERIENCE\nSample University 2023-Present\nStudent Teacher Manila, Philippines\n- Facilitated classroom activities.\nEDUCATION\nSample University 2021-2023\nBachelor of Secondary Education Manila\nCERTIFICATIONS, SKILLS & AWARDS\nSkills: Student Assessment; Educational Technology; Parent Communication\nCertifications: Licensed Professional Teacher\nAwards: With Honors",
+    "expected_skills": ["Student Assessment", "Educational Technology", "Parent Communication"],
+    "expected_roles": ["Student Teacher"],
+    "expected_education_count": 1
+  },
+  {
+    "id": "rejects_cross_section_noise",
+    "text": "TEACHING EXPERIENCE\nScience Teacher\nExample Academy\n2022-2024\n- Developed laboratory activities.\nEDUCATION\nBachelor of Science in Education\nExample University\nAWARDS\nBest Teacher Award\nSKILLS\nNo experience with Moodle\nClassroom Management",
+    "expected_skills": ["Classroom Management"],
+    "expected_roles": ["Science Teacher"],
+    "expected_education_count": 1
+  }
+]

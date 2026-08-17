@@ -4,7 +4,13 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import string
 import re
+from difflib import SequenceMatcher
 from datetime import datetime
+from app.services.education_domain import (
+    classify_section_heading,
+    validate_education_record,
+    validate_experience_record,
+)
 
 # Load models
 nlp = spacy.load("en_core_web_sm")
@@ -24,7 +30,7 @@ RESUME_SECTION_RE = re.compile(
     r'academic\s+experience|faculty\s+experience|experience|projects?|'
     r'certifications?|licenses?|licensure|eligibility|trainings?|seminars?|awards?|'
     r'achievements?|references?|interests?|activities|affiliations?|publications?|'
-    r'personal\s+(?:information|data)|responsibilities|environment|languages|tools)\s*:?\s*$',
+    r'personal\s+(?:information|data)|responsibilities|environment|languages|langues|tools)\s*:?\s*$',
     re.IGNORECASE
 )
 
@@ -43,7 +49,8 @@ TECH_OR_ROLE_RE = re.compile(
 
 NAME_NOISE_RE = re.compile(
     r'\b(email|phone|mobile|contact|address|location|linkedin|github|portfolio|'
-    r'curriculum\s+vitae|resume|application|university|college|school|institute|'
+    r'curriculum\s+vitae|resume|application|word|microsoft\s+word|document|docx?|pdf|'
+    r'university|college|school|institute|'
     r'corporation|company|inc\.?|ltd\.?|solutions?|services?|systems?|technologies|'
     r'enterprises?|industries|agency|group|center|centre|foundation|association|'
     r'street|road|avenue|city|province|country|'
@@ -188,15 +195,64 @@ def extract_certifications(text):
                     date_match = next_date
                 add(canonical, kind, date_match.group(0) if date_match else None)
 
+    # Extract labelled certificate lists, including PDF-wrapped continuation
+    # lines, before walking the broader section. Track consumed lines so skill
+    # and award text in a combined section cannot bleed into certifications.
+    handled_compound_lines = set()
+    compound_heading_index = next((
+        i for i, line in enumerate(lines)
+        if re.fullmatch(r'(?i)certifications?\s*[,/&]\s*skills?\s*(?:[,/&]\s*awards?)?', line)
+    ), None)
+    labelled_index = next((
+        i for i, line in enumerate(lines)
+        if re.match(r'(?i)^[-*\u2022\u25aa]?\s*certifications?\s*:', line)
+    ), None)
+    if compound_heading_index is not None and labelled_index is not None:
+        handled_compound_lines.update(range(compound_heading_index + 1, labelled_index))
+        labelled = re.match(
+            r'(?i)^[-*\u2022\u25aa]?\s*certifications?\s*:\s*(.*)$',
+            lines[labelled_index],
+        )
+        certificate_text = labelled.group(1).strip()
+        end_index = labelled_index + 1
+        while end_index < len(lines) and not re.match(
+            r'(?i)^[-*\u2022\u25aa]?\s*(?:skills?|awards?|education|experience|projects?)\s*:',
+            lines[end_index],
+        ) and not RESUME_SECTION_RE.match(lines[end_index]):
+            certificate_text += ' ' + lines[end_index].lstrip('-*\u2022 ').strip()
+            end_index += 1
+        handled_compound_lines.update(range(labelled_index, end_index))
+        for item in re.split(r'\s*;\s*|\s+\|\s+', certificate_text):
+            add(item)
+        if end_index < len(lines) and re.match(r'(?i)^[-*\u2022\u25aa]?\s*awards?\s*:', lines[end_index]):
+            handled_compound_lines.update(range(end_index, len(lines)))
+
     # Preserve explicitly named certifications not covered by the aliases above.
     section_active = False
     for index, line in enumerate(lines):
-        if re.fullmatch(r'(?:professional\s+)?(?:certifications?|licenses?|licensure|eligibility)', line, re.IGNORECASE):
+        if index in handled_compound_lines:
+            continue
+        if re.fullmatch(
+            r'(?:professional\s+)?(?:certifications?|licenses?|licensure|eligibility)'
+            r'(?:\s*[,/&]\s*(?:skills?|awards?))*',
+            line,
+            re.IGNORECASE,
+        ):
             section_active = True
             continue
         if section_active and RESUME_SECTION_RE.match(line):
             section_active = False
             continue
+        labelled_certifications = re.match(
+            r'(?i)^[-*\u2022\u25aa]?\s*certifications?\s*:\s*(.+)$', line
+        )
+        if section_active and labelled_certifications:
+            for item in re.split(r'\s*;\s*|\s+\|\s+', labelled_certifications.group(1)):
+                add(item)
+            continue
+        if section_active and re.match(r'(?i)^[-*\u2022\u25aa]?\s*(?:skills?|awards?)\s*:', line):
+            continue
+
         explicit = re.search(
             r'(?i)\b((?:certified|certification\s+(?:in|on)|licensed|registered)\s+'
             r'[A-Za-z][A-Za-z0-9 &/+.#-]{2,80})', line
@@ -240,6 +296,10 @@ def extract_contact_info(text):
     name = None
     email = None
     phone = None
+    anonymous_candidate_marker = bool(re.search(
+        r'(?i)\b(?:teacher\s+)?candidate\s*(?:no\.?|number|#)?\s*\d+\b',
+        text,
+    ))
 
     def _clean_name_candidate(value):
         value = EMAIL_RE.sub('', value or '')
@@ -251,6 +311,30 @@ def extract_contact_info(text):
             for char in value
         )
         value = re.sub(r'\s+', ' ', value).strip(' .-')
+
+        # Some PDFs expose each printed glyph twice (for example,
+        # "BBOORRHHAANN GGHHEENNNNAAII"). Collapse the duplicated pairs only
+        # when every letter in a word follows that pattern, so legitimate
+        # doubled letters in ordinary names are left intact.
+        def _collapse_doubled_pdf_word(word):
+            letters = ''.join(char for char in word if char.isalpha())
+            if len(letters) < 6 or len(letters) % 2:
+                return word
+            if not all(letters[i].lower() == letters[i + 1].lower()
+                       for i in range(0, len(letters), 2)):
+                return word
+            collapsed = []
+            pending_letter = False
+            for char in word:
+                if char.isalpha():
+                    if not pending_letter:
+                        collapsed.append(char)
+                    pending_letter = not pending_letter
+                else:
+                    collapsed.append(char)
+            return ''.join(collapsed)
+
+        value = ' '.join(_collapse_doubled_pdf_word(word) for word in value.split())
 
         # Remove honorifics and professional credentials, but preserve family
         # suffixes such as Jr. and III.
@@ -412,7 +496,7 @@ def extract_contact_info(text):
         if len(derived.split()) >= 2 and _is_probable_person_name(derived):
             email_name = _format_person_name(derived)
 
-    if not name:
+    if not name and not anonymous_candidate_marker:
         person_entities = set()
         blocked_entities = set()
         header_doc = nlp("\n".join(header_lines[:8]))
@@ -425,6 +509,28 @@ def extract_contact_info(text):
 
         ranked_candidates = [(110, email_name)] if email_name else []
         email_tokens = set(email_name.lower().split()) if email_name else set()
+
+        # Multi-column PDF extraction can put the given name and surname on
+        # separate header lines. Join adjacent one-word lines when their
+        # combined letters match the email identity (in either name order).
+        if email_compact:
+            for index in range(min(len(header_lines) - 1, 7)):
+                first = _clean_name_candidate(header_lines[index])
+                second = _clean_name_candidate(header_lines[index + 1])
+                if len(first.split()) != 1 or len(second.split()) != 1:
+                    continue
+                combined = f'{first} {second}'
+                if not _is_probable_person_name(combined):
+                    continue
+                forward = ''.join(char.lower() for char in combined if char.isalpha())
+                reverse = ''.join(char.lower() for char in f'{second}{first}' if char.isalpha())
+                identity_similarity = max(
+                    SequenceMatcher(None, email_compact, forward).ratio(),
+                    SequenceMatcher(None, email_compact, reverse).ratio(),
+                )
+                if identity_similarity >= 0.88:
+                    ranked_candidates.append((160 - index * 5, combined))
+
         for index, line in enumerate(header_lines):
             for variant_index, variant in enumerate(_candidate_variants(line)):
                 cleaned = _clean_name_candidate(variant)
@@ -536,7 +642,7 @@ def extract_education(text):
     # Section headers that signal the end of the education section
     NEXT_SECTION_HEADERS = re.compile(
         r'^\s*(experience|professional\s+experience|employment|work\s*history|skills?'
-        r'|technical\s+skills|certifications?|professional\s+(?:training|certifications?)'
+        r'|technical\s+skills|certifications?(?:\s*[,/&]\s*(?:skills?|awards?))*|professional\s+(?:training|certifications?)'
         r'|professional\s+training\s+and\s+certifications?'
         r'|projects?|awards?|achievements?|interests?|references?|languages?|publications?'
         r'|summary|objective|profile|activities|affiliations?|seminars?(?:\s+and\s+trainings?)?'
@@ -554,18 +660,22 @@ def extract_education(text):
                 edu_lines.append('')   # preserve blank line as context
             continue
         header_match = EDU_SECTION_HEADERS.match(line)
+        domain_section = classify_section_heading(line)
         if not header_match and re.match(r'^education\b', line, re.IGNORECASE):
             # Two-column PDFs may append text from the other column to a
             # section heading (for example, "EDUCATION students, foster...").
             in_edu_section = True
             continue
-        if header_match:
+        if header_match or domain_section == 'education':
             in_edu_section = True
-            inline_content = (header_match.group('content') or '').strip()
+            inline_content = (header_match.group('content') or '').strip() if header_match else ''
             if inline_content:
                 edu_lines.append(inline_content)
             continue
-        if in_edu_section and NEXT_SECTION_HEADERS.match(line):
+        if in_edu_section and (
+            NEXT_SECTION_HEADERS.match(line)
+            or (domain_section and domain_section != 'education')
+        ):
             break
         if in_edu_section:
             edu_lines.append(line)
@@ -748,6 +858,18 @@ def extract_education(text):
         if school_after_separator:
             description = description[:school_after_separator.start()]
         description = re.sub(r'\s+', ' ', description).strip(' .,;:|-')
+        # Compact templates sometimes append a city to the degree line. Strip
+        # only a trailing named place; locations inside a credential remain.
+        if len(description.split()) >= 5:
+            place_entities = [
+                ent for ent in nlp(description).ents
+                if ent.label_ in {'GPE', 'LOC'} and ent.end_char == len(description)
+            ]
+            if place_entities:
+                place_start = place_entities[-1].start_char
+                prefix = description[:place_start]
+                prefix = re.sub(r'(?i)\b(?:metro|city\s+of)\s*$', '', prefix)
+                description = prefix.strip(' ,;-')
         return (description or fallback_label)[:255]
 
     # ------------------------------------------------------------------
@@ -771,8 +893,27 @@ def extract_education(text):
         if re.match(r'^\s*\([^)]*high\s+school[^)]*\)\s*$', line, re.IGNORECASE):
             continue
 
+        # In compact education layouts an institution and its dates precede
+        # the credential, e.g. "National University 2021-2023" followed by
+        # "Senior High School Baliwag, Bulacan". The institution line contains
+        # "School" in some cases but must not become a second credential row.
+        next_line = scan_lines[i + 1].strip() if i + 1 < len(scan_lines) else ''
+        institution_with_dates = bool(
+            re.search(r'\b(?:19|20)\d{2}\b', line)
+            and re.search(rf'\b{INSTITUTION_KEYWORD}\b', line, re.IGNORECASE)
+        )
+        if institution_with_dates and re.match(
+            r'(?i)^(?:senior|junior)?\s*high\s+school\b', next_line
+        ):
+            continue
+
         # Try to find institution on the same line first
-        institution = _extract_institution(line, allow_org_fallback=False)
+        credential_only_high_school = bool(re.match(
+            r'(?i)^(?:senior|junior)\s+high\s+school\b', line
+        ))
+        institution = None if credential_only_high_school else _extract_institution(
+            line, allow_org_fallback=False
+        )
 
         # If not found, inspect nearby lines in either direction. Education
         # layouts commonly place the school before or after the degree.
@@ -789,6 +930,12 @@ def extract_education(text):
                     if not nearby or NEXT_SECTION_HEADERS.match(nearby):
                         break
                     if any(pattern.search(nearby) for pattern, _ in DEGREE_PATTERNS):
+                        dated_school = (
+                            re.search(r'\b(?:19|20)\d{2}\b', nearby)
+                            and re.search(rf'\b{INSTITUTION_KEYWORD}\b', nearby, re.IGNORECASE)
+                        )
+                        if dated_school:
+                            institution = _extract_institution(nearby)
                         break
                     institution = _extract_institution(nearby)
                     if institution:
@@ -796,8 +943,14 @@ def extract_education(text):
                 if institution:
                     break
 
+        degree_description = _extract_degree_description(line, degree_match, matched_degree)
+        if credential_only_high_school:
+            degree_description = re.match(
+                r'(?i)^(senior|junior)\s+high\s+school', line
+            ).group(0).title()
+
         records.append({
-            'degree': _extract_degree_description(line, degree_match, matched_degree),
+            'degree': degree_description,
             'institution': institution or 'Unknown Institution'
         })
 
@@ -807,6 +960,9 @@ def extract_education(text):
     unique_records = []
     seen = set()
     for rec in records:
+        is_valid, _ = validate_education_record(rec)
+        if not is_valid:
+            continue
         key = (rec['degree'].lower(), rec['institution'].lower())
         if key in seen:
             continue
@@ -1028,12 +1184,16 @@ def extract_experience_records(text):
 
     for raw_line in all_lines:
         line = raw_line.strip()
-        if EXP_SECTION_HEADERS.match(line):
+        domain_section = classify_section_heading(line)
+        if EXP_SECTION_HEADERS.match(line) or domain_section == 'experience':
             in_exp_section = True
             found_exp_section = True
             found_teaching_section = bool(re.search(r'(?i)teaching|faculty|academic', line))
             continue
-        if in_exp_section and NEXT_SECTION_HEADERS.match(line):
+        if in_exp_section and (
+            NEXT_SECTION_HEADERS.match(line)
+            or (domain_section and domain_section != 'experience')
+        ):
             break
         if in_exp_section:
             exp_lines.append(raw_line)   # keep blank lines as block separators
@@ -1080,6 +1240,7 @@ def extract_experience_records(text):
         re.IGNORECASE
     )
     MONTH_DATE_RANGE_RE = DATE_RANGE_RE
+    SINGLE_YEAR_RE = re.compile(r'\b((?:19|20)\d{2})\b')
     EXPLICIT_MONTHS_RE = re.compile(r'\b(\d+(?:\.\d+)?)\+?\s*months?\b', re.IGNORECASE)
 
     # Job-title keywords (used to detect title lines)
@@ -1087,7 +1248,7 @@ def extract_experience_records(text):
         r'\b(developer|engineer|manager|analyst|consultant|architect|lead|'
         r'specialist|programmer|administrator|officer|designer|director|staff|member|teaching|'
         r'validator|statistician|'
-        r'coordinator|supervisor|intern|associate|executive|scientist|teacher|writer|'
+        r'coordinator|supervisor|intern|volunteer|associate|executive|scientist|teacher|writer|'
         r'instructor|professor|lecturer|faculty|principal|dean|tutor|counselor|counsellor|'
         r'registrar|librarian|educator|trainer|adviser|advisor|head\s+teacher|'
         r'guidance\s+counselor|guidance\s+counsellor|curriculum\s+developer|'
@@ -1121,7 +1282,7 @@ def extract_experience_records(text):
         re.IGNORECASE
     )
 
-    BULLET_PREFIX_RE = re.compile(r'^[\-\*•\u2022]\s*')
+    BULLET_PREFIX_RE = re.compile(r'^[\-\*•\u2022\u25aa]\s*')
 
     def _is_probable_skill_line(line_text):
         cleaned = BULLET_PREFIX_RE.sub('', line_text).strip()
@@ -1208,6 +1369,11 @@ def extract_experience_records(text):
         m3 = EXPLICIT_MONTHS_RE.search(line_text)
         if m3:
             return round(float(m3.group(1)) / 12.0, 2)
+        # A lone year is a common compact-resume convention for short roles.
+        # It is only consumed when the surrounding logic has already found a
+        # credible role and employer inside the experience section.
+        if SINGLE_YEAR_RE.fullmatch(line_text.strip()):
+            return 1.0
         return None
 
     def _is_probable_job_start(line_idx, line_text, prev_text=None, next_text=None,
@@ -1400,6 +1566,7 @@ def extract_experience_records(text):
         value = (value or '').strip()
         return (
             2 < len(value) <= 120
+            and not BULLET_PREFIX_RE.match(value)
             and not DATE_RANGE_RE.search(value)
             and not RESUME_SECTION_RE.match(value)
             and not re.match(r'(?i)^(managed|developed|created|implemented|handled|handling|served|prepared|led|responsible|adviser)\b', value)
@@ -1434,6 +1601,32 @@ def extract_experience_records(text):
             'location': location or inline_location or 'Not Identified',
             'years': years,
         })
+
+    def _split_role_and_trailing_location(value):
+        """Split lines such as 'Student Nurse Manila, Philippines'."""
+        cleaned = value.strip()
+        title_match = TITLE_KEYWORDS.search(cleaned)
+        if not title_match:
+            return None, None
+        title = cleaned[:title_match.end()].strip(' ,-')
+        location = cleaned[title_match.end():].strip(' ,-') or None
+        return title, location
+
+    # Compact layout: employer and date on one line, then role and location.
+    # Example: "Far Eastern University - Manila 2024-Present" followed by
+    # "Student Nurse Manila, Philippines".
+    for index, line in enumerate(scan_lines[:-1]):
+        stripped = line.strip()
+        range_match = DATE_RANGE_RE.search(stripped)
+        single_year = re.search(r'\b(?:19|20)\d{2}\s*$', stripped)
+        date_match = range_match or single_year
+        if not date_match:
+            continue
+        company = stripped[:date_match.start()].strip(' ,-–—|')
+        title, location = _split_role_and_trailing_location(scan_lines[index + 1])
+        if title and _plausible_company(company) and not TITLE_KEYWORDS.search(company):
+            date_value = date_match.group(0)
+            _add_structured(title, company, date_value, location)
 
     for index, line in enumerate(scan_lines):
         stripped = line.strip()
@@ -1730,6 +1923,16 @@ def extract_experience_records(text):
             r'(?i)dean.?s\s+lister|president.?s\s+lister|with\s+honors|magna\s+cum\s+laude',
             rec.get('job_title') or ''
         )):
+            continue
+        company_value = (rec.get('company') or '').strip()
+        if (
+            not company_value
+            or re.match(r'^[\W_]', company_value)
+            or re.fullmatch(r'(?i)(?:n/?a|none|unknown)', company_value)
+        ):
+            continue
+        is_valid, _ = validate_experience_record(rec)
+        if not is_valid:
             continue
         key = (rec['job_title'].lower(), rec['company'].lower())
         overlapping_index = next((

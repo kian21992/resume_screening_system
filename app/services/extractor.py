@@ -281,7 +281,20 @@ def _clean_extracted_text(text):
     # Strip trailing spaces on each line
     # Preserve meaningful multi-space/tab column separators; the structured
     # experience parser uses them to distinguish company and role columns.
-    text = "\n".join(line.strip() for line in text.splitlines())
+    cleaned_lines = [line.strip() for line in text.splitlines()]
+
+    # Layered PDF text and duplicated DOCX table content can emit the same
+    # line multiple times in succession. Remove only adjacent normalized
+    # duplicates; repeated headings or employers elsewhere remain meaningful.
+    deduplicated_lines = []
+    previous_key = None
+    for line in cleaned_lines:
+        key = re.sub(r'[^\w]+', ' ', line, flags=re.UNICODE).strip().casefold()
+        if key and key == previous_key:
+            continue
+        deduplicated_lines.append(line)
+        previous_key = key if key else None
+    text = "\n".join(deduplicated_lines)
 
     # Collapse 3+ consecutive blank lines to 2
     text = re.sub(r'\n{3,}', '\n\n', text)
