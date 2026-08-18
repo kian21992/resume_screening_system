@@ -2604,6 +2604,112 @@ class TestExtractionImprovements(unittest.TestCase):
             names = [c["certification_name"] for c in extract_certifications(sample)]
             self.assertIn(expected, names, msg=f"{expected} not found in {names}")
 
+    def test_full_day_dates_and_wrapped_year_keep_work_rows_aligned(self):
+        text = """WORK EXPERIENCE
+- Remittance clerk (1 year)
+Seyer's Freezing Pointe Corporation
+Brgy. Lara, CSFP
+July 31, 2024 - July 31,
+2025
+- Auditor (1 year)
+Precious Loyal Pet
+Brgy. San Agustin, CSFP
+Jun 7, 2023 - Jun 22, 2024
+- Quality Assurance clerk (7 months)
+Superl Philippines Incorporation
+Bacolor Pampanga
+June 26, 2018 - February 8, 2019
+SKILLS
+Microsoft Office
+"""
+        records = extract_experience_records(text)
+
+        self.assertEqual(len(records), 3)
+        self.assertEqual(records[0]["job_title"], "Remittance clerk")
+        self.assertEqual(records[0]["company"], "Seyer's Freezing Pointe Corporation")
+        self.assertEqual(records[0]["location"], "Brgy. Lara, CSFP")
+        self.assertEqual(records[0]["years"], 1.0)
+        self.assertEqual(records[2]["company"], "Superl Philippines Incorporation")
+        self.assertEqual(records[2]["years"], 0.67)
+
+    def test_explicit_school_levels_create_clean_education_rows(self):
+        text = """EDUCATIONAL BACKGROUND
+Tertiary Level:
+Bachelor of Science in Business Administration Major in Marketing
+Don Honorio Ventura Technological State University
+Secondary Level: San Isidro High School (2014)
+Intermediate Education: San Isidro Elementary School (2010)
+TRAININGS AND SEMINARS ATTENDED
+Pre-employment workshop
+"""
+        records = extract_education(text)
+
+        self.assertEqual(records, [
+            {
+                "degree": "Bachelor of Science in Business Administration Major in Marketing",
+                "institution": "Don Honorio Ventura Technological State University",
+            },
+            {"degree": "High School", "institution": "San Isidro High School"},
+            {
+                "degree": "Elementary Education",
+                "institution": "San Isidro Elementary School",
+            },
+        ])
+
+    def test_repeated_experience_sections_are_combined(self):
+        text = """WORK EXPERIENCE
+Teacher
+Alpha Learning School
+January 2020 - January 2022
+EDUCATION
+Bachelor of Education
+State University
+TEACHING EXPERIENCE
+Tutor
+Beta Academy
+February 2022 - February 2024
+SKILLS
+Lesson Planning
+"""
+        records = extract_experience_records(text)
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(
+            {(record["job_title"], record["company"]) for record in records},
+            {("Teacher", "Alpha Learning School"), ("Tutor", "Beta Academy")},
+        )
+
+    def test_repeated_education_sections_are_combined(self):
+        text = """EDUCATION
+Bachelor of Elementary Education
+First State University
+SKILLS
+Classroom Management
+ACADEMIC QUALIFICATIONS
+Master of Arts in Education
+Second State University
+EXPERIENCE
+Teacher
+"""
+        records = extract_education(text)
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["institution"], "First State University")
+        self.assertEqual(records[1]["institution"], "Second State University")
+
+    def test_empty_explicit_sections_do_not_scan_unrelated_resume_text(self):
+        text = """SUMMARY
+Teacher role requires a Bachelor's degree and five years of experience.
+EDUCATION
+SKILLS
+Classroom Management
+EXPERIENCE
+REFERENCES
+Available upon request
+"""
+        self.assertEqual(extract_education(text), [])
+        self.assertEqual(extract_experience_records(text), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

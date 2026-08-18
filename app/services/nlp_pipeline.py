@@ -653,6 +653,7 @@ def extract_education(text):
     lines = [line.strip() for line in text.split('\n')]
     edu_lines = []
     in_edu_section = False
+    found_edu_section = False
 
     for line in lines:
         if not line:
@@ -665,9 +666,13 @@ def extract_education(text):
             # Two-column PDFs may append text from the other column to a
             # section heading (for example, "EDUCATION students, foster...").
             in_edu_section = True
+            found_edu_section = True
             continue
         if header_match or domain_section == 'education':
+            if found_edu_section and edu_lines and edu_lines[-1] != '':
+                edu_lines.append('')
             in_edu_section = True
+            found_edu_section = True
             inline_content = (header_match.group('content') or '').strip() if header_match else ''
             if inline_content:
                 edu_lines.append(inline_content)
@@ -676,12 +681,15 @@ def extract_education(text):
             NEXT_SECTION_HEADERS.match(line)
             or (domain_section and domain_section != 'education')
         ):
-            break
+            in_edu_section = False
+            continue
         if in_edu_section:
             edu_lines.append(line)
 
-    # If we found a dedicated section use it; otherwise scan everything
-    scan_lines = edu_lines if edu_lines else [l.strip() for l in lines if l.strip()]
+    # An explicitly present but empty Education section must remain empty.
+    # Falling back to the whole resume in that case can turn degree words in a
+    # summary or job description into fabricated education rows.
+    scan_lines = edu_lines if found_edu_section else [l.strip() for l in lines if l.strip()]
 
     # ------------------------------------------------------------------
     # Step 2: Degree patterns — ordered most-specific first
@@ -724,6 +732,14 @@ def extract_education(text):
             r'\b(high\s+school(?:\s+diploma)?|secondary\s+school|ged|diploma)\b',
             re.I),
          "High School Diploma"),
+
+        # Elementary / primary education is useful in school-sector resumes
+        # and is often listed as "Intermediate Education" in Philippine CVs.
+        (re.compile(
+            r'\b(elementary\s+school|primary\s+school|primary\s+education|'
+            r'intermediate\s+education|elementary\s+education)\b',
+            re.I),
+         "Elementary Education"),
     ]
 
     # ------------------------------------------------------------------
@@ -875,18 +891,33 @@ def extract_education(text):
     # ------------------------------------------------------------------
     # Step 4: Scan lines for degree matches
     # ------------------------------------------------------------------
+    EDUCATION_LEVEL_RE = re.compile(
+        r'(?i)^\s*(?:[-*\u2022\u25aa]\s*)?'
+        r'(?P<level>secondary\s+level|intermediate\s+education|'
+        r'elementary\s+level|primary\s+level|primary\s+education)\s*:',
+    )
     records = []
     for i, line in enumerate(scan_lines):
         if not line:
             continue
-        matched_degree = None
-        degree_match = None
-        for pattern, label in DEGREE_PATTERNS:
-            match = pattern.search(line)
-            if match:
-                matched_degree = label
-                degree_match = match
-                break
+        level_match = EDUCATION_LEVEL_RE.match(line)
+        if level_match:
+            level_name = level_match.group('level').casefold()
+            matched_degree = (
+                'High School'
+                if 'secondary' in level_name
+                else 'Elementary Education'
+            )
+            degree_match = level_match
+        else:
+            matched_degree = None
+            degree_match = None
+            for pattern, label in DEGREE_PATTERNS:
+                match = pattern.search(line)
+                if match:
+                    matched_degree = label
+                    degree_match = match
+                    break
 
         if not matched_degree:
             continue
@@ -943,11 +974,43 @@ def extract_education(text):
                 if institution:
                     break
 
-        degree_description = _extract_degree_description(line, degree_match, matched_degree)
+        degree_description = (
+            matched_degree
+            if level_match
+            else _extract_degree_description(line, degree_match, matched_degree)
+        )
         if credential_only_high_school:
             degree_description = re.match(
                 r'(?i)^(senior|junior)\s+high\s+school', line
             ).group(0).title()
+
+        # Preserve a wrapped specialization without absorbing the next school,
+        # date, or resume section into the credential.
+        if not level_match:
+            for distance in (1, 2):
+                detail_index = i + distance
+                if detail_index >= len(scan_lines):
+                    break
+                detail = scan_lines[detail_index].strip()
+                if not detail or classify_section_heading(detail):
+                    break
+                detail_match = re.match(
+                    r'(?i)^(?:major|minor|speciali[sz]ation|concentration|field\s+of\s+study)'
+                    r'\s*(?:in|:)?\s+.+$',
+                    detail,
+                )
+                if detail_match:
+                    normalized_detail = re.sub(r'\s+', ' ', detail).strip(' .,;:|-()')
+                    if normalized_detail.casefold() not in degree_description.casefold():
+                        degree_description = f'{degree_description}, {normalized_detail}'[:255]
+                    break
+                if (_extract_institution(detail, allow_org_fallback=False)
+                        or re.search(r'\b(?:19|20)\d{2}\b', detail)):
+                    break
+
+        degree_description = degree_description.strip(' .,;:|-')
+        if degree_description.count('(') > degree_description.count(')'):
+            degree_description = degree_description.rstrip(' (')
 
         records.append({
             'degree': degree_description,
@@ -1186,20 +1249,48 @@ def extract_experience_records(text):
         line = raw_line.strip()
         domain_section = classify_section_heading(line)
         if EXP_SECTION_HEADERS.match(line) or domain_section == 'experience':
+            if found_exp_section and exp_lines and exp_lines[-1].strip():
+                exp_lines.append('')
             in_exp_section = True
             found_exp_section = True
-            found_teaching_section = bool(re.search(r'(?i)teaching|faculty|academic', line))
+            found_teaching_section = (
+                found_teaching_section
+                or bool(re.search(r'(?i)teaching|faculty|academic', line))
+            )
             continue
         if in_exp_section and (
             NEXT_SECTION_HEADERS.match(line)
             or (domain_section and domain_section != 'experience')
         ):
-            break
+            in_exp_section = False
+            continue
         if in_exp_section:
             exp_lines.append(raw_line)   # keep blank lines as block separators
 
-    # If no explicit section found, use all lines (graceful fallback)
-    scan_lines = exp_lines if exp_lines else all_lines
+    # An explicitly present but empty Experience section must not fall back to
+    # scanning education, skills, certificates, or references as employment.
+    scan_lines = exp_lines if found_exp_section else all_lines
+
+    # PDF line wrapping can split the final year from a full date range:
+    # ``July 31, 2024 - July 31,`` / ``2025``. Rejoin only that narrow pattern
+    # so ordinary neighboring lines retain their record boundaries.
+    normalized_scan_lines = []
+    line_index = 0
+    while line_index < len(scan_lines):
+        current_line = scan_lines[line_index]
+        next_line = scan_lines[line_index + 1].strip() if line_index + 1 < len(scan_lines) else ''
+        if (
+            re.search(r'(?i)\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+                      r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|'
+                      r'Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},\s*$', current_line)
+            and re.fullmatch(r'(?:19|20)\d{2}', next_line)
+        ):
+            normalized_scan_lines.append(f'{current_line} {next_line}')
+            line_index += 2
+            continue
+        normalized_scan_lines.append(current_line)
+        line_index += 1
+    scan_lines = normalized_scan_lines
 
     # ------------------------------------------------------------------
     # Step 2: Split into blocks on job-entry boundaries
@@ -1231,9 +1322,16 @@ def extract_experience_records(text):
         re.IGNORECASE
     )
 
-    # Final normalized range matcher. It supports year-only, month-name, and
-    # numeric month/year formats, including two-digit years and current roles.
-    DATE_TOKEN = rf'(?:{MONTH_TOKEN}\.?[\s,./-]*\d{{2,4}}|\d{{1,2}}[/-]\d{{2,4}}|(?:19|20)\d{{2}})'
+    # Final normalized range matcher. Full dates must be recognized before
+    # month/year forms; otherwise ``June 05, 2019`` can be misread as the year
+    # 2005 and inflate a short role into more than a decade of experience.
+    FULL_MONTH_DATE = (
+        rf'{MONTH_TOKEN}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,\s*|\s+)(?:19|20)\d{{2}}'
+    )
+    MONTH_YEAR_DATE = rf'{MONTH_TOKEN}\.?[\s,./-]+\d{{2,4}}'
+    DATE_TOKEN = (
+        rf'(?:{FULL_MONTH_DATE}|{MONTH_YEAR_DATE}|\d{{1,2}}[/-]\d{{2,4}}|(?:19|20)\d{{2}})'
+    )
     DATE_RANGE_RE = re.compile(
         rf'(?P<start>{DATE_TOKEN})\s*(?:-|\u2013|\u2014|to)\s*'
         rf'(?P<end>Present|Current|Till\s+date|To\s+date|{DATE_TOKEN})\b',
@@ -1327,6 +1425,23 @@ def extract_experience_records(text):
         if re.fullmatch(r'(?:present|current|till\s+date|to\s+date)', value):
             now = datetime.now()
             return now.year * 12 + now.month - 1
+
+        full_named = re.fullmatch(
+            r'([a-z]+)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)((?:19|20)\d{2})',
+            value,
+        )
+        if full_named:
+            month_lookup = {
+                'jan': 1, 'january': 1, 'feb': 2, 'february': 2,
+                'mar': 3, 'march': 3, 'apr': 4, 'april': 4,
+                'may': 5, 'jun': 6, 'june': 6, 'jul': 7, 'july': 7,
+                'aug': 8, 'august': 8, 'sep': 9, 'september': 9,
+                'oct': 10, 'october': 10, 'nov': 11, 'november': 11,
+                'dec': 12, 'december': 12,
+            }
+            month = month_lookup.get(full_named.group(1))
+            if month:
+                return int(full_named.group(2)) * 12 + month - 1
 
         numeric = re.fullmatch(r'(\d{1,2})[/-](\d{2,4})', value)
         if numeric:
@@ -1482,6 +1597,13 @@ def extract_experience_records(text):
     def _clean_job_title(raw):
         value = DATE_RANGE_RE.sub('', raw or '')
         value = re.sub(r'\(\s*\)', '', value)
+        value = re.sub(
+            r'(?i)\s*\(\s*(?:(?:\d+(?:\.\d+)?\s+years?)\s*'
+            r'(?:and\s+)?(?:\d+(?:\.\d+)?\s+months?)?|'
+            r'\d+(?:\.\d+)?\s+months?)\s*\)\s*$',
+            '',
+            value,
+        )
         value = re.sub(r'^\s*(?:Role|Position|Job\s*Title|Designation|Title)\s*:\s*', '', value, flags=re.IGNORECASE)
         value = re.sub(r'\s+', ' ', value)
         return value.strip(' .,-|')
@@ -1569,11 +1691,46 @@ def extract_experience_records(text):
             and not BULLET_PREFIX_RE.match(value)
             and not DATE_RANGE_RE.search(value)
             and not RESUME_SECTION_RE.match(value)
-            and not re.match(r'(?i)^(managed|developed|created|implemented|handled|handling|served|prepared|led|responsible|adviser)\b', value)
+            and not re.match(r'(?i)^(managed|developed|created|implemented|handled|handling|served|prepared|led|built|worked|provided|responsible|adviser)\b', value)
             and not re.match(r'(?i)^(?:client|company|employer|role|position|job\s*title|product\s*title|designation)\s*:', value)
             and not re.search(r'(?i)\b(?:email|phone|gmail|yahoo|outlook|responsibilities|duties)\b', value)
+            and not _looks_like_location_line(value)
             and not value.endswith(':')
         )
+
+    def _looks_like_location_line(value):
+        value = (value or '').strip()
+        if not value or len(value) > 120:
+            return False
+        if re.search(
+            r'(?i)\b(?:university|college|school|academy|institute|corporation|corp\.?|'
+            r'inc\.?|company|group|solutions?|services?)\b',
+            value,
+        ):
+            return False
+        if LOCATION_LINE_RE.search(value):
+            return True
+        if re.match(
+            r'(?i)^(?:purok|barangay|brgy\.?|sitio|district|city\s+of)\b',
+            value,
+        ):
+            return True
+        if re.search(
+            r'(?i)(?:,\s*(?:Philippines|United States|UAE|India|Colombia|'
+            r'[A-Z][A-Za-z .-]+\s+(?:City|Province|State|Region))\s*$)',
+            value,
+        ):
+            return True
+        if re.fullmatch(
+            r'(?i)(?:Philippines|United States|UAE|India|Colombia|Canada|Australia)',
+            value,
+        ):
+            return True
+        return bool(re.fullmatch(
+            r'(?i)[A-Za-z .-]{2,50}\s+(?:Pampanga|Bulacan|Manila|Cebu|Davao|'
+            r'Laguna|Cavite|Rizal|Tarlac|Bataan|Pangasinan)',
+            value,
+        ))
 
     def _add_structured(title, company, date_line, location=None):
         title = _clean_job_title(title)
@@ -1637,18 +1794,41 @@ def extract_experience_records(text):
         previous = scan_lines[index - 1].strip() if index > 0 else ''
         previous_two = scan_lines[index - 2].strip() if index > 1 else ''
 
+        at_company_match = TITLE_AT_COMPANY_RE.match(remainder) if remainder else None
+        if at_company_match and _is_probable_title(at_company_match.group('title')):
+            _add_structured(
+                at_company_match.group('title'),
+                at_company_match.group('company'),
+                stripped,
+            )
+            continue
         if remainder and TITLE_KEYWORDS.search(remainder) and _plausible_company(previous):
             _add_structured(remainder, previous, stripped)
             continue
-        if TITLE_KEYWORDS.search(previous) and _plausible_company(previous_two):
+        if (
+            TITLE_KEYWORDS.search(previous)
+            and not DATE_RANGE_RE.search(previous)
+            and _plausible_company(previous_two)
+        ):
             _add_structured(previous, previous_two, stripped)
             continue
         if (_plausible_company(previous) and found_teaching_section
                 and re.search(r'(?i)\b(?:school|academy|college|university|center|inc\.?)\b', previous)
+                and not any(
+                    _is_probable_title(scan_lines[position])
+                    for position in range(index - 2, max(-1, index - 5), -1)
+                    if not DATE_RANGE_RE.search(scan_lines[position])
+                )
                 and not re.search(r'(?i)teaching\s+internship', previous)):
             _add_structured('Teacher', previous, stripped)
             continue
         if found_exp_section and not remainder:
+            if any(
+                _is_probable_title(scan_lines[position])
+                for position in range(index - 1, max(-1, index - 4), -1)
+                if not DATE_RANGE_RE.search(scan_lines[position])
+            ):
+                continue
             company_hint = None
             for back in range(index - 1, max(-1, index - 20), -1):
                 candidate = scan_lines[back].strip()
@@ -1676,8 +1856,60 @@ def extract_experience_records(text):
         for lookahead in range(index + 2, min(len(scan_lines), index + 22)):
             candidate_date = scan_lines[lookahead].strip()
             if DATE_RANGE_RE.search(candidate_date):
-                _add_structured(title, company, candidate_date)
+                location_parts = [
+                    scan_lines[position].strip()
+                    for position in range(index + 2, lookahead)
+                    if _looks_like_location_line(scan_lines[position])
+                ]
+                _add_structured(
+                    title,
+                    company,
+                    candidate_date,
+                    ', '.join(location_parts)[:120] if location_parts else None,
+                )
                 break
+
+    # Date-anchored layout: company, role, optional location, then date. This
+    # complements the role-first pass and prevents the location/date fragment
+    # from being selected as the employer.
+    for date_index, line in enumerate(scan_lines):
+        if not DATE_RANGE_RE.search(line):
+            continue
+        title_index = next((
+            position
+            for position in range(date_index - 1, max(-1, date_index - 5), -1)
+            if (
+                not DATE_RANGE_RE.search(scan_lines[position])
+                and _is_probable_title(scan_lines[position])
+            )
+        ), None)
+        if title_index is None:
+            continue
+
+        company = None
+        company_index = None
+        for position in (title_index - 1, title_index + 1):
+            if not 0 <= position < date_index:
+                continue
+            candidate = scan_lines[position].strip()
+            if _plausible_company(candidate) and not _is_probable_title(candidate):
+                company = candidate
+                company_index = position
+                break
+        if not company:
+            continue
+
+        location_parts = [
+            scan_lines[position].strip()
+            for position in range(title_index + 1, date_index)
+            if position != company_index and _looks_like_location_line(scan_lines[position])
+        ]
+        _add_structured(
+            scan_lines[title_index],
+            company,
+            line,
+            ', '.join(location_parts)[:120] if location_parts else None,
+        )
 
     # A following employer can omit the repeated role title. Reuse the most
     # recent teaching/faculty title, but only for a clearly named institution.
@@ -1917,8 +2149,13 @@ def extract_experience_records(text):
     # ------------------------------------------------------------------
     unique_records = []
     seen = set()
-    record_candidates = structured_records if structured_records else records
-    for rec in record_candidates:
+    # Keep high-confidence deterministic rows first, then allow the block
+    # parser to contribute entries that use a different layout. Choosing only
+    # one parser caused partial histories whenever the structured pass found
+    # at least one (but not every) job.
+    record_candidates = [*structured_records, *records]
+    structured_count = len(structured_records)
+    for candidate_index, rec in enumerate(record_candidates):
         if (not rec.get('job_title') or re.search(
             r'(?i)dean.?s\s+lister|president.?s\s+lister|with\s+honors|magna\s+cum\s+laude',
             rec.get('job_title') or ''
@@ -1929,6 +2166,24 @@ def extract_experience_records(text):
             not company_value
             or re.match(r'^[\W_]', company_value)
             or re.fullmatch(r'(?i)(?:n/?a|none|unknown)', company_value)
+        ):
+            continue
+        if company_value != 'Not Identified' and (
+            not _plausible_company(company_value)
+            or _looks_like_location_line(company_value)
+        ):
+            continue
+        # A fallback block can span two neighboring jobs and produce a title
+        # containing the employer from an already parsed structured row. Keep
+        # the structured row and discard that cross-record combination.
+        if candidate_index >= structured_count and any(
+            existing.get('company')
+            and existing['company'].casefold() in (rec.get('job_title') or '').casefold()
+            and (
+                existing['job_title'].casefold() in (rec.get('job_title') or '').casefold()
+                or (rec.get('job_title') or '').casefold() in existing['job_title'].casefold()
+            )
+            for existing in structured_records
         ):
             continue
         is_valid, _ = validate_experience_record(rec)
