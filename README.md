@@ -27,7 +27,7 @@ pip install -r requirements.txt
 4. Install the NLP data used by the system:
 
 ```bash
-python -m spacy download en_core_web_sm
+python -m pip install "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl"
 python -m nltk.downloader punkt stopwords
 ```
 
