@@ -151,7 +151,7 @@ _SKILL_SECTION_HEADER_RE = _re.compile(
     _re.IGNORECASE,
 )
 _NON_SKILL_SECTION_RE = _re.compile(
-    r"^\s*(?:objective|career\s+objective|summary|profile|professional\s+summary"
+    r"^\s*(?:objective|career\s+objective|summary|profile|professional\s+summary|contact(?:\s+information)?"
     r"|education(?:al\s+(?:background|attainment))?|academic\s+background"
     r"|academic\s+(?:credentials?|qualifications?)|educational\s+qualifications?"
     r"|work\s+experience|professional\s+experience|experience"
@@ -230,16 +230,17 @@ _ASPIRATIONAL_SKILL_RE = _re.compile(
 _CONTEXT_EXCLUDED_HEADER_RE = _re.compile(
     r"^\s*(?:education(?:al\s+(?:background|attainment|qualifications?))?"
     r"|academic\s+(?:background|credentials?|qualifications?)"
-    r"|personal\s+(?:information|data|details)|references?|interests?|hobbies"
-    r"|awards?|achievements?|affiliations?|publications?)"
+    r"|personal\s+(?:information|data|details)|(?:character\s+)?references?|interests?|hobbies"
+    r"|awards?|achievements?|affiliations?|professional\s*&\s*civic\s+affiliation"
+    r"|certifications?|licenses?|trainings?|seminars?|professional\s+development"
+    r"|publications?(?:\s*&\s*presentations?)?)"
     r"(?:\s*:\s*.*)?\s*$",
     _re.IGNORECASE,
 )
 _CONTEXT_INCLUDED_HEADER_RE = _re.compile(
     r"^\s*(?:objective|career\s+objective|summary|profile|professional\s+summary"
     r"|work\s+experience|professional\s+experience|teaching\s+experience"
-    r"|employment(?:\s+history)?|experience|projects?|certifications?|licenses?"
-    r"|trainings?|seminars?|professional\s+development)"
+    r"|employment(?:\s+history)?|experience|projects?)"
     r"(?:\s*:\s*.*)?\s*$",
     _re.IGNORECASE,
 )
@@ -317,6 +318,8 @@ def _contextual_skill_text(text):
     for raw_line in (text or "").splitlines():
         line = raw_line.strip()
         if not line:
+            continue
+        if _re.search(r'(?i)https?://|www\.|\S+@\S+|\b\w+\.(?:com|net|org|edu)(?:/|\b)', line):
             continue
         if _SKILL_SECTION_HEADER_RE.match(line):
             included = False
@@ -551,6 +554,11 @@ def extract_resume_skills(resume_text, additional_skills=None):
     The returned list is informational and does not affect scoring.
     """
     text = resume_text or ""
+    text = _re.sub(
+        r'(?m)^([^\n]{3,60}(?:&|and)\s+[A-Za-z]+)\n(?=[a-z])',
+        r'\1 ',
+        text,
+    )
     vocabulary = _resume_skill_vocabulary(additional_skills)
     extracted = []
     seen = set()
@@ -665,6 +673,12 @@ def extract_resume_skills(resume_text, additional_skills=None):
     if pending_bullet:
         add_section_line(pending_bullet)
 
+    # A dedicated Skills section is authoritative for the displayed inventory.
+    # Do not inflate it with words found in duties, publications, certificates,
+    # employer names, or profile prose. Job matching remains a separate process.
+    if extracted:
+        return extracted
+
     # Add catalog-backed skills evidenced outside the explicit skill section.
     # Canonical IDs are used only for deduplication; display text always uses
     # the wording found in the resume.
@@ -673,6 +687,8 @@ def extract_resume_skills(resume_text, additional_skills=None):
         extracted, vocabulary
     )
     for canonical, variants in vocabulary.items():
+        if len(_re.sub(r'[^A-Za-z0-9]', '', canonical)) <= 2:
+            continue
         if canonical.lower() in covered_catalog_skills:
             continue
         mention = _positive_skill_mention(contextual_text, variants)
@@ -868,11 +884,17 @@ def get_degree_rank(degree_str):
         r'\bmaster', r'\bm\.s\.?\b', r'\bm\.a\.?\b', r'\bmba\b',
         r'\b(?:med|maed|mpa|msw|mtech|msc)\b',
     ]):
+        if _matches([
+            r'\bongoing\b', r'\bincomplete\b', r'\b\d+\s+units?\b',
+            r'complete(?:d)?\s+academic\s+requirements?',
+        ]):
+            return 3
         return 4
     if _matches([
         r'\bbachelor', r'\bb\.s\.?\b', r'\bb\.a\.?\b', r'\bb\.e\.?\b',
+        r'\bcollege\s+graduate\b',
         r'\bbtech\b', r'\bbs\b', r'\bba\b', r'\bbe\b',
-        r'\b(?:bsed|beed|bsn|bsit|bscs|bsa|bba|bshm|bsba|ab)\b',
+        r'\b(?:bsed|beed|bsie|bsn|bsit|bscs|bsa|bba|bshm|bsba|ab)\b',
         r'\b(?:bped|bece|bsece|bse|bsce|bpe|bsbio|bsmath|bseng)\b',
     ]):
         return 3

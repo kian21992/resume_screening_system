@@ -1431,7 +1431,7 @@ Teacher
         ])
         self.assertEqual(interests, ["Event Hosting", "Theater Acting"])
 
-    def test_contextual_skills_are_added_when_explicit_section_exists(self):
+    def test_explicit_skill_section_is_authoritative_for_display_inventory(self):
         skills = extract_resume_skills("""
 Skills
 Python, Clear written communication
@@ -1441,12 +1441,7 @@ Education
 Bachelor of Science in Information Technology
 """)
 
-        self.assertEqual(skills, [
-            "Python",
-            "Clear written communication",
-            "Docker",
-            "Kubernetes",
-        ])
+        self.assertEqual(skills, ["Python", "Clear written communication"])
 
     def test_contextual_alias_is_not_duplicated_when_explicitly_listed(self):
         skills = extract_resume_skills("""

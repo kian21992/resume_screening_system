@@ -43,7 +43,7 @@ SECTION_ALIASES = {
         r"professional experience", r"employment history", r"work history",
         r"teaching experience", r"teaching experiences", r"faculty experience",
         r"academic experience", r"education experience", r"career history",
-        r"professional background", r"positions? held",
+        r"professional background", r"work[- ]related experience", r"positions? held",
         r"exp[eé]riences? professionnelles?", r"exp[eé]rience professionnelle",
     ),
     "education": (
@@ -108,6 +108,7 @@ _LICENSE_RE = re.compile(
 def normalize_heading(line):
     """Return heading-like text without bullets, punctuation, or inline data."""
     value = _BULLET_RE.sub("", line or "").strip()
+    value = re.sub(r"^[A-Z]\s*[.)-]\s*", "", value, flags=re.I)
     value = value.split(":", 1)[0]
     value = re.sub(r"\s+", " ", value).strip(" ,/&-|.").casefold()
     return value
@@ -125,6 +126,7 @@ def classify_section_heading(line):
 
 def classify_combined_heading(line):
     raw = _BULLET_RE.sub("", line or "").strip()
+    raw = re.sub(r"^[A-Z]\s*[.)-]\s*", "", raw, flags=re.I)
     raw = raw.split(":", 1)[0]
     parts = [part.strip() for part in re.split(r"\s*(?:,|&|/|\band\b)\s*", raw, flags=re.I) if part.strip()]
     classified = []

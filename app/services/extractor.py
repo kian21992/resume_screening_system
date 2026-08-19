@@ -49,10 +49,12 @@ def _find_column_gutter(words, page_width):
 
     runs = []
     run_start = None
+    # Allow one crossing word: decorative rules, headings, and URLs can cross
+    # an otherwise stable gutter on template-based resumes.
     for x, occupied in bins + [(end_x, 999)]:
-        if occupied == 0 and run_start is None:
+        if occupied <= 1 and run_start is None:
             run_start = x
-        elif occupied != 0 and run_start is not None:
+        elif occupied > 1 and run_start is not None:
             if x - run_start >= 16:
                 runs.append((run_start, x))
             run_start = None
@@ -79,9 +81,12 @@ def _extract_page_columns(page):
         return None
 
     left_edge, right_edge = gutter
+    split_x = (left_edge + right_edge) / 2
+    # Assign gutter-crossing words by their center instead of dropping them.
+    # Large names and headings often extend slightly into the whitespace.
     columns = [
-        [word for word in words if word['x1'] <= left_edge],
-        [word for word in words if word['x0'] >= right_edge],
+        [word for word in words if (word['x0'] + word['x1']) / 2 < split_x],
+        [word for word in words if (word['x0'] + word['x1']) / 2 >= split_x],
     ]
     columns = [column for column in columns if column]
     columns.sort(key=lambda column: min(word['top'] for word in column))
@@ -131,7 +136,15 @@ def _extract_pdf_pdfplumber(filepath):
                         row_text = "  ".join(row_cells)
                         normalized_row = re.sub(r'\s+', ' ', row_text).strip().lower()
                         normalized_page = re.sub(r'\s+', ' ', page_text).lower()
-                        if normalized_row and normalized_row not in normalized_page:
+                        # On template-based resumes, pdfplumber can identify the
+                        # entire page as a table even though extract_text already
+                        # returned every cell. Appending partially matching rows
+                        # then duplicates most of the resume and destroys section
+                        # boundaries. Table fallback is only needed for pages whose
+                        # ordinary extraction is sparse.
+                        page_is_sparse = len(normalized_page) < 200
+                        if (page_is_sparse and normalized_row
+                                and normalized_row not in normalized_page):
                             pages_text.append(row_text)
 
     return "\n".join(pages_text)
@@ -206,6 +219,7 @@ def extract_text_from_docx(filepath):
     parts = []
 
     def _append_table(table):
+        rows = []
         for row in table.rows:
             row_cells = []
             seen_cells = set()
@@ -218,7 +232,65 @@ def extract_text_from_docx(filepath):
                 if cell_text:
                     row_cells.append(cell_text)
             if row_cells:
-                parts.append("  ".join(row_cells))
+                rows.append(row_cells)
+
+        if not rows:
+            return
+        header = [re.sub(r'\s+', ' ', cell).strip().casefold() for cell in rows[0]]
+        all_labels = {
+            re.sub(r'\s+', ' ', cell).strip().casefold()
+            for row in rows for cell in row
+        }
+
+        # Preserve the meaning of common application-form resume tables rather
+        # than flattening headers, values, and references into ambiguous prose.
+        if {'full name', 'residence'}.issubset(all_labels) and any(
+            'email' in value or 'cellphone' in value for value in all_labels
+        ):
+            for row in rows:
+                for index in range(0, len(row) - 1, 2):
+                    label, value = row[index:index + 2]
+                    if label.strip() and value.strip():
+                        parts.append(f'{label.strip()}: {value.strip()}')
+            return
+
+        if 'level' in header and any('school name' in value for value in header):
+            parts.append('EDUCATION')
+            for row in rows[1:]:
+                padded = row + [''] * (5 - len(row))
+                level, school, course, location, year = padded[:5]
+                if not level.strip() or not school.strip():
+                    continue
+                credential = course.strip() if course.strip().casefold() not in {'', 'n/a', 'na'} else level.strip()
+                if credential.casefold() == 'elementary':
+                    credential = 'Elementary Education'
+                parts.extend((credential, school.strip()))
+            return
+
+        if any('company' in value or 'organization' in value for value in header) and 'position' in header:
+            parts.append('WORK EXPERIENCE')
+            for row in rows[1:]:
+                padded = row + [''] * (6 - len(row))
+                company, position, location, start, end, duties = padded[:6]
+                if not company.strip() and not position.strip():
+                    continue
+                date_range = f'{start.strip()} - {end.strip()}'.strip(' -')
+                parts.append(' | '.join(value for value in (
+                    position.strip() or 'Position Not Stated', company.strip(),
+                    location.strip(), date_range,
+                ) if value))
+                if duties.strip():
+                    parts.append(f'Duties: {duties.strip()}')
+            return
+
+        if 'full name' in header and any('relationship' in value for value in header):
+            parts.append('CHARACTER REFERENCES')
+            for row in rows[1:]:
+                parts.append(' | '.join(value.strip() for value in row if value.strip()))
+            return
+
+        for row in rows:
+            parts.append("  ".join(row))
 
     # 1. Read header content first because resumes often place contact details there.
     seen_headers = set()
@@ -281,7 +353,39 @@ def _clean_extracted_text(text):
     # Strip trailing spaces on each line
     # Preserve meaningful multi-space/tab column separators; the structured
     # experience parser uses them to distinguish company and role columns.
-    cleaned_lines = [line.strip() for line in text.splitlines()]
+    def normalize_decorative_heading(line):
+        """Collapse all-caps headings exported as one glyph per word.
+
+        Canva and similar resume builders often encode ``WORK EXPERIENCE`` as
+        ``W O R K  E X P E R I E N C E``. Only known headings are rewritten,
+        avoiding unsafe guesses about spacing in letter-spaced names.
+        """
+        tokens = line.strip().split()
+        if len(tokens) < 4:
+            return line.strip()
+        glyph_share = sum(
+            len(re.sub(r'[^A-Za-z]', '', token)) <= 1 for token in tokens
+        ) / len(tokens)
+        if glyph_share < 0.75:
+            return line.strip()
+        compact = re.sub(r'[^A-Za-z&]', '', line).upper()
+        headings = {
+            'PROFESSIONALPROFILE': 'PROFESSIONAL PROFILE',
+            'CONTACT': 'CONTACT',
+            'EDUCATION': 'EDUCATION',
+            'SKILLS': 'SKILLS',
+            'LANGUAGE': 'LANGUAGE',
+            'LANGUAGES': 'LANGUAGES',
+            'WORKEXPERIENCE': 'WORK EXPERIENCE',
+            'PERSONALINFORMATION': 'PERSONAL INFORMATION',
+            'CHARACTERREFERENCES': 'CHARACTER REFERENCES',
+            'PUBLICATIONS&PRESENTATIONS': 'PUBLICATIONS & PRESENTATIONS',
+            'PROFESSIONAL&CIVICAFFILIATION': 'PROFESSIONAL & CIVIC AFFILIATION',
+            'LICENSES&CERTIFICATIONS': 'LICENSES & CERTIFICATIONS',
+        }
+        return headings.get(compact, line.strip())
+
+    cleaned_lines = [normalize_decorative_heading(line) for line in text.splitlines()]
 
     # Layered PDF text and duplicated DOCX table content can emit the same
     # line multiple times in succession. Remove only adjacent normalized
