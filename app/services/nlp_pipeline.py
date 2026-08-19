@@ -1394,12 +1394,36 @@ def extract_years_of_experience(text):
         r'|instructor|professor|lecturer|faculty|principal|dean|tutor|registrar'
         r'|librarian|educator|trainer|adviser|advisor|accountant|auditor|nurse'
         r'|physician|therapist|assistant|technician|staff|clerk|cashier'
-        r'|representative|agent|secretary|receptionist|encoder|teller)\b')
+        r'|representative|agent|secretary|receptionist|encoder|teller'
+        # Parity with TITLE_KEYWORDS so both experience paths agree on what
+        # counts as a job line.
+        r'|aide|baker|bookkeeper|caregiver|chef|cook|counsellor|counselor'
+        r'|dentist|doctor|driver|electrician|foreman|housekeeper|mechanic'
+        r'|operator|pharmacist|recruiter|security|server|statistician'
+        r'|validator|volunteer|waiter|waitress|worker|writer'
+        # Additional common occupations (service, trades, field, creative)
+        # that previously scored zero years because the title was unknown.
+        r'|barista|bartender|busser|dishwasher|enumerator|vendor|merchandiser'
+        r'|salesman|saleslady|welder|painter|plumber|carpenter|janitor'
+        r'|utility|messenger|bagger|stocker|warehouseman|laborer|packer'
+        r'|tailor|seamstress|barber|stylist|beautician|gardener|landscaper'
+        r'|butcher|farmer|fisherman|rider|courier|dispatcher|conductor'
+        r'|photographer|videographer|editor|journalist|reporter|translator'
+        r'|interpreter|transcriptionist|proofreader|copywriter|illustrator'
+        r'|animator|collector|appraiser|underwriter|broker|trader|estimator'
+        r'|surveyor|draftsman|inspector|machinist|fabricator|fitter|rigger'
+        r'|installer|repairman|serviceman|lineman|liaison)\b')
     EDU_HINT = re.compile(
         r'(?i)\b(bachelor|master|ph\.?d|doctorate|doctor\s+of|associate\s+degree'
         r'|diploma\s+in|graduated|cum\s+laude|magna\s+cum|summa\s+cum|degree\s+in'
         r'|major\s+in|undergraduate|post.?graduate|tertiary\s+education'
         r'|secondary\s+education|elementary\s+education)\b')
+    # Award/honor phrases whose date ranges must not be counted as work, even
+    # though a token like "dean" (from "Dean's List") looks like a job title.
+    AWARD_HINT = re.compile(
+        r"(?i)\b(dean'?s\s+list(?:er)?|honor\s+roll|honou?r\s+student"
+        r'|with\s+honors?|scholarship|scholar|awardee|recipient|medal(?:ist)?'
+        r'|plaque|recognition|distinction|top\s+\d+|rank\s+\d+)\b')
 
     def _ord_months(value):
         value = value.strip().lower()
@@ -1418,8 +1442,10 @@ def extract_years_of_experience(text):
         if not match:
             continue
         neighborhood = ' '.join(lines[max(0, i - 1):i + 2])
-        # Skip ranges that live near education text; require a job title nearby.
-        if EDU_HINT.search(neighborhood):
+        # Skip ranges that live near education or award text; require a job
+        # title nearby. The award guard prevents honors such as "Dean's List"
+        # from being read as employment via the "dean" title keyword.
+        if EDU_HINT.search(neighborhood) or AWARD_HINT.search(line):
             continue
         if not TITLE_HINT.search(neighborhood):
             continue
@@ -1599,7 +1625,18 @@ def extract_experience_records(text):
         r'nurse|physician|doctor|dentist|pharmacist|therapist|caregiver|medical\s+assistant|'
         r'sales|marketing|representative|agent|customer\s+service|receptionist|secretary|'
         r'clerk|assistant|aide|technician|operator|mechanic|electrician|driver|'
-        r'chef|cook|baker|waiter|waitress|server|housekeeper|security|foreman|worker)\b',
+        r'chef|cook|baker|waiter|waitress|server|housekeeper|security|foreman|worker|'
+        # Additional common occupations so uncommon-but-real job titles are not
+        # dropped from experience parsing and ranking.
+        r'barista|bartender|busser|dishwasher|enumerator|vendor|merchandiser|'
+        r'salesman|saleslady|welder|painter|plumber|carpenter|janitor|utility|'
+        r'messenger|bagger|stocker|warehouseman|laborer|packer|tailor|seamstress|'
+        r'barber|stylist|beautician|gardener|landscaper|butcher|farmer|fisherman|'
+        r'rider|courier|dispatcher|conductor|photographer|videographer|editor|'
+        r'journalist|reporter|translator|interpreter|transcriptionist|proofreader|'
+        r'copywriter|illustrator|animator|collector|appraiser|underwriter|broker|'
+        r'trader|estimator|surveyor|draftsman|inspector|machinist|fabricator|'
+        r'fitter|rigger|installer|repairman|serviceman|lineman|liaison)\b',
         re.IGNORECASE
     )
     TITLE_LINE_RE = re.compile(
