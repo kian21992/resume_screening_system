@@ -30,7 +30,7 @@ RESUME_SECTION_RE = re.compile(
     r'^\s*(objective|summary|profile|professional\s+summary|technical\s+skills|skills|'
     r'education|work\s+experience|professional\s+experience|teaching\s+experience|'
     r'academic\s+experience|faculty\s+experience|experience|projects?|'
-    r'certifications?|licenses?|licensure|eligibility|trainings?|seminars?|awards?|'
+    r'certifications?|certificates?|licenses?|licensure|eligibility|trainings?|seminars?|awards?|'
     r'achievements?|references?|interests?|activities|affiliations?|publications?|'
     r'personal\s+(?:information|data)|responsibilities|environment|languages|langues|tools)\s*:?\s*$',
     re.IGNORECASE
@@ -143,11 +143,55 @@ def extract_certifications(text):
     month = (r'(?:January|February|March|April|May|June|July|August|September|'
              r'October|November|December)')
     date_re = re.compile(rf'\b(?:{month}\s*)?(?:19|20)\d{{2}}\b', re.IGNORECASE)
-    lines = [re.sub(r'\s+', ' ', line).strip() for line in text.splitlines() if line.strip()]
+    source_lines = [re.sub(r'\s+', ' ', line).strip() for line in text.splitlines() if line.strip()]
+    # Post-nominal credentials inside CHARACTER REFERENCES belong to the
+    # referee, not the applicant. Exclude that section from every credential
+    # detection path instead of trying to blacklist individual abbreviations.
+    lines = []
+    current_section = 'header'
+    for line in source_lines:
+        section = classify_section_heading(line)
+        if section:
+            current_section = section
+        if current_section != 'references':
+            lines.append(line)
+
+    # Reconstruct logical credential rows after PDF extraction wraps them.
+    # Pipe-delimited lists usually continue without a bullet, while bulleted
+    # lists start a new credential at every bullet. An unmatched parenthesis
+    # is also a strong continuation signal (issuer/date often wraps).
+    logical_lines = []
+    current_section = 'header'
+    credential_bullet_re = re.compile(r'^[\s\-*\u2022\u25aa\u25cf\uf0b7\uf06c]+')
+    for line in lines:
+        section = classify_section_heading(line)
+        if section:
+            current_section = section
+            logical_lines.append(line)
+            continue
+        if current_section == 'certifications' and logical_lines:
+            previous = logical_lines[-1]
+            previous_is_heading = classify_section_heading(previous) is not None
+            starts_bullet = bool(credential_bullet_re.match(line))
+            should_continue = (
+                not previous_is_heading
+                and not starts_bullet
+                and (
+                    previous.count('(') > previous.count(')')
+                    or '|' in previous
+                )
+            )
+            if should_continue:
+                logical_lines[-1] = f'{previous} {line}'
+                continue
+        logical_lines.append(line)
+    lines = logical_lines
     records = []
 
     def add(name, credential_type='Certification', date=None, issuer=None):
-        name = re.sub(r'\s+', ' ', name or '').strip(' .,:;|-')
+        name = re.sub(r'^[\s\-*\u2022\u25aa\u25cf\uf0b7\uf06c]+', '', name or '')
+        name = re.sub(r'\s+', ' ', name).strip(' .,:;|-')
+        name = re.sub(r',\s*\)$', ')', name)
         if not name:
             return
         key = re.sub(r'[^a-z0-9]+', '', name.lower())
@@ -182,7 +226,7 @@ def extract_certifications(text):
         (r'\bRegistered\s+Nurse\b|\bRN\b', 'Registered Nurse', 'Professional License'),
         (r'\bCertified\s+Public\s+Accountant\b|\bCPA\b', 'Certified Public Accountant', 'Professional License'),
         (r'\bRegistered\s+Criminologist\b|\bRCRIM\b', 'Registered Criminologist', 'Professional License'),
-        (r'\bCivil\s+Service\s+(?:Professional\s+)?Eligible\b|\bCSE\s+Passer\b', 'Civil Service Eligibility', 'Eligibility'),
+        (r'\bCivil\s+Service\s+(?:(?:Professional\s+)?Eligible|Eligibility)\b|\bCSE\s+Passer\b', 'Civil Service Eligibility', 'Eligibility'),
         (r'\bTESOL\b|\bTeaching\s+English\s+to\s+Speakers\s+of\s+Other\s+Languages\b', 'TESOL Certificate', 'Certification'),
         (r'\bTEFL\b|\bTeaching\s+English\s+as\s+a\s+Foreign\s+Language\b', 'TEFL Certificate', 'Certification'),
         (r'\bNational\s+Certificate\s+(?:Level\s+)?(?:I{1,3}|IV)\b|\bNC\s*(?:II|III|IV|I)\b', 'TESDA National Certificate', 'Certification'),
@@ -311,7 +355,7 @@ def extract_certifications(text):
         if index in handled_compound_lines or index in dated_section_lines:
             continue
         if re.fullmatch(
-            r'(?:professional\s+)?(?:certifications?|licenses?|licensure|eligibility)'
+            r'(?:professional\s+)?(?:certifications?|certificates?|licenses?|licensure|eligibility)'
             r'|(?:licenses?|licensure|eligibility)\s*(?:&|and|/)\s*certifications?'
             r'|certifications?\s*(?:&|and|/)\s*(?:licenses?|licensure|eligibility)'
             r'(?:\s*[,/&]\s*(?:skills?|awards?))*',
@@ -341,7 +385,7 @@ def extract_certifications(text):
             r'(?i)\b((?:certified|certification\s+(?:in|on)|licensed|registered)\s+'
             r'[A-Za-z][A-Za-z0-9 &/+.#-]{2,80})', line
         )
-        section_candidate = section_active and len(line) <= 120
+        section_candidate = section_active and (len(line) <= 120 or '|' in line)
         if section_candidate and (
             date_re.fullmatch(line.strip(' ()'))
             or re.match(r'(?i)^(?:issued|issuer|date|valid|expires?|expiration)\s*:', line)
@@ -352,23 +396,45 @@ def extract_certifications(text):
             # Inside a dedicated section, preserve meaningful prefixes such as
             # "AWS" in "AWS Certified Cloud Practitioner". Outside a section,
             # keep using the explicit credential phrase to avoid header noise.
-            candidate = line if section_candidate else explicit.group(1)
-            date_match = date_re.search(candidate)
-            candidate = date_re.sub('', candidate).strip(' .,:;|-()')
-            # Do not absorb a narrative clause that happens to follow a real
-            # credential on the same extracted line.
-            candidate = re.split(
-                r'(?i)\s+(?:with|who|and\s+has)\s+(?=(?:over\s+|more\s+than\s+)?\d+\s+years?\b)',
-                candidate,
-                maxsplit=1,
-            )[0].strip(' .,:;|-()')
-            if len(candidate.split()) > 16 or re.search(
-                r'(?i)\b(?:responsible\s+for|worked\s+on|developed|managed|objective|summary)\b',
-                candidate,
-            ):
-                continue
-            if not re.fullmatch(r'(?i)(certifications?|licenses?|licensure|eligibility)', candidate):
-                add(candidate, 'Professional License' if re.search(r'(?i)licensed|registered|board|passer', candidate) else 'Certification', date_match.group(0) if date_match else None)
+            candidate_text = line if section_candidate else explicit.group(1)
+            # Compact PDF templates often flatten a visual certificate list
+            # into one pipe-separated line. Preserve each credential instead
+            # of treating the complete row as one arbitrary certificate.
+            candidate_items = (
+                re.split(r'\s*\|\s*|\s*;\s*', candidate_text)
+                if section_candidate else [candidate_text]
+            )
+            for candidate in candidate_items:
+                date_match = date_re.search(candidate)
+                candidate = date_re.sub('', candidate).strip(' .,:;|-')
+                candidate = re.sub(r'\(\s*(?:,\s*)?\)', '', candidate)
+                candidate = re.sub(r',\s*\)$', ')', candidate)
+                # Do not absorb a narrative clause that happens to follow a
+                # real credential on the same extracted line.
+                candidate = re.split(
+                    r'(?i)\s+(?:with|who|and\s+has)\s+(?=(?:over\s+|more\s+than\s+)?\d+\s+years?\b)',
+                    candidate,
+                    maxsplit=1,
+                )[0].strip(' .,:;|-')
+                if len(candidate.split()) > 16 or re.search(
+                    r'(?i)\b(?:responsible\s+for|worked\s+on|developed|managed|objective|summary)\b',
+                    candidate,
+                ):
+                    continue
+                if re.fullmatch(
+                    r'(?i)(certifications?|certificates?|licenses?|licensure|eligibility)',
+                    candidate,
+                ):
+                    continue
+                if re.search(r'(?i)\b(?:award|achiever|runner[ -]?up)\b', candidate):
+                    kind = 'Award'
+                elif re.search(r'(?i)\b(?:course|workshop|webinar|training)\b', candidate):
+                    kind = 'Training'
+                else:
+                    kind = ('Professional License' if re.search(
+                        r'(?i)licensed|registered|board|passer', candidate
+                    ) else 'Certification')
+                add(candidate, kind, date_match.group(0) if date_match else None)
 
     return records
 
@@ -384,6 +450,19 @@ def extract_contact_info(text):
         r'(?i)\b(?:teacher\s+)?candidate\s*(?:no\.?|number|#)?\s*\d+\b',
         text,
     ))
+
+    # Contact details under CHARACTER REFERENCES belong to referees rather
+    # than the applicant. Keep those lines available to other extractors but
+    # exclude them from contact detection.
+    identity_lines = []
+    current_identity_section = 'header'
+    for raw_line in text.splitlines():
+        section = classify_section_heading(raw_line.strip())
+        if section:
+            current_identity_section = section
+        if current_identity_section != 'references':
+            identity_lines.append(raw_line)
+    identity_text = '\n'.join(identity_lines)
 
     def _clean_name_candidate(value):
         value = EMAIL_RE.sub('', value or '')
@@ -486,6 +565,13 @@ def extract_contact_info(text):
             return False
         if len(words) == 1:
             return allow_single and len(words[0]) >= 3 and words[0].isalpha()
+        meaningful_words = [
+            word.strip(".'-") for word in words
+            if len(word.strip(".'-")) > 1
+            and word.lower().strip(".'-") not in NAME_PARTICLES | NAME_SUFFIXES
+        ]
+        if not meaningful_words:
+            return False
         for word in words:
             plain = word.strip(".'-")
             if not plain or not all(char.isalpha() or char in ".'-" for char in word):
@@ -534,12 +620,12 @@ def extract_contact_info(text):
         return unique
     
     # 1. Extract Email
-    email_match = EMAIL_RE.search(text)
+    email_match = EMAIL_RE.search(identity_text)
     if email_match:
         email = email_match.group(0).strip(' .,;:').lower()
         
     # 2. Extract Phone
-    phone_match = PHONE_RE.search(text)
+    phone_match = PHONE_RE.search(identity_text)
     if phone_match:
         phone = phone_match.group(0).strip()
         
@@ -619,7 +705,7 @@ def extract_contact_info(text):
                     word.lower().strip(".'-") for word in cleaned.split()
                     if len(word.strip(".'-")) > 1
                 )
-                if email_compact.startswith(visible_letters):
+                if len(visible_letters) >= 3 and email_compact.startswith(visible_letters):
                     missing = email_compact[len(visible_letters):]
                     if len(missing) >= 3 and missing.isalpha():
                         ranked_candidates.append((155 - min(index, 20), f'{cleaned} {missing.title()}'))
@@ -681,6 +767,24 @@ def extract_contact_info(text):
                 )
                 if email_compact and candidate_compact == email_compact:
                     score += 40
+                identity_words = [
+                    word.lower().strip(".'-") for word in cleaned_words
+                    if len(word.strip(".'-")) > 1
+                ]
+                email_substring_matches = sum(
+                    1 for word in identity_words if word in email_compact
+                )
+                if email_compact and email_substring_matches >= 2:
+                    score += 35
+                # A location or another contact fragment extracted from a
+                # URL/email line is weaker identity evidence than a standalone
+                # header name.
+                if (
+                    EMAIL_RE.search(line)
+                    or PHONE_RE.search(line)
+                    or re.search(r'https?://|www\.', line, re.IGNORECASE)
+                ) and email_substring_matches < 2:
+                    score -= 30
                 if re.match(r'(?i)^\s*(?:curriculum\s+vitae|resume)\s+(?:of|for)\s+', line):
                     score += 25
                 ranked_candidates.append((score, cleaned))
@@ -936,6 +1040,20 @@ def extract_education(text):
         if introduced:
             value = introduced.group('school').strip(' .,;:|-')
         if not labelled:
+            # A one-row education layout may flatten the school on the left
+            # and its location on the right, for example ``Holy Angel
+            # University Angeles City, Philippines``. Only remove a trailing
+            # place expression after the institution keyword; this preserves
+            # legitimate names such as ``University of the Philippines``.
+            institution_word = re.search(rf'\b{INSTITUTION_KEYWORD}\b', value, re.I)
+            if institution_word:
+                trailing_text = value[institution_word.end():]
+                if re.fullmatch(
+                    r'\s+(?:[A-Z][A-Za-z.-]*\s+){0,2}[A-Z][A-Za-z.-]*\s+'
+                    r'(?:City|Province|State|Region)(?:,\s*[A-Z][A-Za-z .-]+)?',
+                    trailing_text,
+                ):
+                    value = value[:institution_word.end()]
             value = ADDRESS_TAIL_RE.sub('', value).strip(' .,;:|-')
         if not value or len(value) > 120 or JUNK_INSTITUTION.match(value):
             return None
@@ -1632,7 +1750,8 @@ def extract_experience_records(text):
         r'salesman|saleslady|welder|painter|plumber|carpenter|janitor|utility|'
         r'messenger|bagger|stocker|warehouseman|laborer|packer|tailor|seamstress|'
         r'barber|stylist|beautician|gardener|landscaper|butcher|farmer|fisherman|'
-        r'rider|courier|dispatcher|conductor|photographer|videographer|editor|'
+        r'rider|courier|dispatcher|conductor|photographer|videographer|editor|artist|'
+        r'correspondent|owner|'
         r'journalist|reporter|translator|interpreter|transcriptionist|proofreader|'
         r'copywriter|illustrator|animator|collector|appraiser|underwriter|broker|'
         r'trader|estimator|surveyor|draftsman|inspector|machinist|fabricator|'
@@ -1971,7 +2090,7 @@ def extract_experience_records(text):
             and not BULLET_PREFIX_RE.match(value)
             and not DATE_RANGE_RE.search(value)
             and not RESUME_SECTION_RE.match(value)
-            and not re.match(r'(?i)^(managed|developed|created|implemented|handled|handling|served|prepared|led|built|worked|provided|responsible|adviser)\b', value)
+            and not re.match(r'(?i)^(?:and|or|to|for|managed|developed|created|implemented|handled|handling|served|prepared|led|built|worked|provided|responsible|adviser)\b', value)
             and not re.match(r'(?i)^(?:client|company|employer|role|position|job\s*title|product\s*title|designation)\s*:', value)
             and not re.search(r'(?i)\b(?:email|phone|gmail|yahoo|outlook|responsibilities|duties)\b', value)
             and not _looks_like_location_line(value)
@@ -2038,6 +2157,24 @@ def extract_experience_records(text):
             'location': location or inline_location or 'Not Identified',
             'years': years,
         })
+
+    # Role and date on one line, employer on the next. This is common in clean
+    # single-column CVs: ``Backend Developer | Jan 2024 - Apr 2024`` followed
+    # by the organization. Remove the date before applying title heuristics so
+    # a valid multi-word role is not rejected as narrative text.
+    for index, line in enumerate(scan_lines[:-1]):
+        stripped = line.strip()
+        if not DATE_RANGE_RE.search(stripped):
+            continue
+        title = DATE_RANGE_RE.sub('', stripped).strip(' []-â€“â€” ,;|')
+        company = scan_lines[index + 1].strip()
+        if (
+            _is_probable_title(title)
+            and _plausible_company(company)
+            and not _is_probable_title(company)
+            and not DATE_RANGE_RE.search(company)
+        ):
+            _add_structured(title, company, stripped)
 
     # Role-first layouts: title, date, employer, location. This is common in
     # modern two-column resumes and is more reliable than block proximity.
@@ -2126,7 +2263,14 @@ def extract_experience_records(text):
                 stripped,
             )
             continue
-        if remainder and TITLE_KEYWORDS.search(remainder) and _plausible_company(previous):
+        following = scan_lines[index + 1].strip() if index + 1 < len(scan_lines) else ''
+        following_is_employer = (
+            _plausible_company(following)
+            and not _is_probable_title(following)
+            and not DATE_RANGE_RE.search(following)
+        )
+        if (remainder and TITLE_KEYWORDS.search(remainder)
+                and _plausible_company(previous) and not following_is_employer):
             _add_structured(remainder, previous, stripped)
             continue
         if (

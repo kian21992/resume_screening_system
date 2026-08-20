@@ -53,7 +53,7 @@ SECTION_ALIASES = {
         r"degrees?", r"formations?", r"parcours acad[eé]mique",
     ),
     "certifications": (
-        r"certifications?", r"licenses?", r"licensure", r"eligibility",
+        r"certifications?", r"certificates?", r"licenses?", r"licensure", r"eligibility",
         r"certifications? and licenses?", r"professional certifications?",
     ),
     "training": (
@@ -61,12 +61,16 @@ SECTION_ALIASES = {
         r"trainings? and seminars?(?: attended)?",
         r"seminars? and trainings?(?: attended)?",
     ),
-    "projects": (r"projects?", r"academic projects?", r"research projects?"),
+    "projects": (
+        r"projects?", r"academic projects?", r"research projects?", r"coursework",
+        r"relevant coursework",
+        r"(?:relevant )?coursework and projects?",
+    ),
     "awards": (r"awards?", r"achievements?", r"honors?", r"distinctions?"),
     "languages": (r"languages?", r"langues"),
     "references": (r"references?", r"character references?"),
     "profile": (r"summary", r"professional summary", r"profile", r"objective", r"career objective"),
-    "personal": (r"personal information", r"personal data", r"contact information"),
+    "personal": (r"personal information", r"personal data", r"contact", r"contact information"),
     "affiliations": (r"affiliations?", r"organizations?", r"activities"),
 }
 

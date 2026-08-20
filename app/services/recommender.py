@@ -165,6 +165,10 @@ _NON_SKILL_SECTION_RE = _re.compile(
 )
 _SKILL_CATEGORY_RE = _re.compile(
     r"^(?:programming\s+languages?|languages?|frameworks?|libraries|databases?"
+    r"|frameworks?\s*(?:&|and|/)\s*libraries"
+    r"|backend\s*(?:&|and|/)\s*databases?"
+    r"|tools?\s*(?:&|and|/)\s*platforms?"
+    r"|core\s+concepts?"
     r"|cloud(?:\s+platforms?)?|platforms?|software|applications?|methodologies"
     r"|soft\s+skills?|hard\s+skills?|technical|laboratory|others?|tools"
     r"|additional\s+skills?"
@@ -195,7 +199,10 @@ _SKILL_CATEGORY_PREFIX_RE = _re.compile(
     r"|web\s+service\s+specifications\s+and\s+implementations"
     r"|project\s+management\s+tools?|manual\s+test\s*&\s*automation\s+tools?"
     r"|release\s*&\s*deployment\s+tools?|frontend|db|platforms?|domain"
-    r"|soft\s+skills?|hard\s+skills?|tools?)"
+    r"|soft\s+skills?|hard\s+skills?|core\s+concepts?"
+    r"|frameworks?\s*(?:&|and|/)\s*libraries"
+    r"|backend\s*(?:&|and|/)\s*databases?"
+    r"|tools?\s*(?:&|and|/)\s*platforms?|tools?)"
     r"\s*(?::|\s{2,}|\t|\s+(?=(?-i:[A-Z0-9])|[.#/+]))\s*",
     _re.IGNORECASE,
 )
@@ -404,6 +411,7 @@ def _split_top_level_skill_items(value):
             and (
                 "," in value[index + 1:]
                 or len(value[:index].split()) >= 4
+                or len(_re.findall(r"\s+-\s+", value)) >= 2
             )
         )
         delimiter = depth == 0 and (
@@ -610,10 +618,62 @@ def extract_resume_skills(resume_text, additional_skills=None):
             value += " " + continuation
         add_section_line(value)
 
+    # Rejoin category rows that wrapped during PDF extraction. Keeping the
+    # complete logical row preserves compound skills such as "API Integration"
+    # and parenthesized technology lists split across physical lines.
+    rebuilt_lines = []
+    pending_category_line = None
+    rebuilding_skill_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        header = _SKILL_SECTION_HEADER_RE.match(line)
+        boundary = classify_section_heading(line)
+        if header:
+            if pending_category_line:
+                rebuilt_lines.append(pending_category_line)
+                pending_category_line = None
+            rebuilding_skill_section = True
+            rebuilt_lines.append(raw_line)
+            continue
+        if rebuilding_skill_section and boundary and boundary != "skills":
+            if pending_category_line:
+                rebuilt_lines.append(pending_category_line)
+                pending_category_line = None
+            rebuilding_skill_section = False
+            rebuilt_lines.append(raw_line)
+            continue
+        if rebuilding_skill_section:
+            labelled = _re.match(r"^([^:]{1,55}):\s*(.+)$", line)
+            prefixed_category = _SKILL_CATEGORY_PREFIX_RE.match(line)
+            is_category_row = bool(
+                (
+                    labelled
+                    and (
+                        _SKILL_CATEGORY_RE.fullmatch(labelled.group(1).strip())
+                        or _SKILL_CATEGORY_PREFIX_RE.fullmatch(labelled.group(1).strip())
+                    )
+                )
+                or (prefixed_category and prefixed_category.end() < len(line))
+            )
+            if is_category_row:
+                if pending_category_line:
+                    rebuilt_lines.append(pending_category_line)
+                pending_category_line = raw_line
+                continue
+            if pending_category_line and line:
+                pending_category_line = f"{pending_category_line.rstrip()} {line}"
+                continue
+        if pending_category_line:
+            rebuilt_lines.append(pending_category_line)
+            pending_category_line = None
+        rebuilt_lines.append(raw_line)
+    if pending_category_line:
+        rebuilt_lines.append(pending_category_line)
+
     in_skill_section = False
     pending_bullet = None
     pending_joined_lines = 0
-    for raw_line in text.splitlines():
+    for raw_line in rebuilt_lines:
         line = raw_line.strip()
         header = _SKILL_SECTION_HEADER_RE.match(line)
         domain_sections = classify_combined_heading(line)

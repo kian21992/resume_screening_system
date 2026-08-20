@@ -2706,5 +2706,127 @@ Available upon request
         self.assertEqual(extract_experience_records(text), [])
 
 
+class TestCurrentUploadExtractionRegressions(unittest.TestCase):
+    """Generalized regressions derived from the two clean uploaded resumes."""
+
+    def test_header_name_is_not_reconstructed_from_na_project_text(self):
+        text = """HERO D. PARK
+Angeles City, Pampanga | hdpark09@gmail.com | (+63) 09455261300
+PROJECTS
+Attendance Application
+N/A
+"""
+        contact = extract_contact_info(text)
+
+        self.assertEqual(contact["name"], "Hero D. Park")
+        self.assertEqual(contact["phone"], "09455261300")
+
+    def test_location_and_reference_phone_are_not_applicant_contact_data(self):
+        text = """GENE ELPIE L. LANDOY
+Graphics Designer | UI/UX Designer
+portfolio.example | Boac Marinduque | g.landoyelpie@gmail.com
+CHARACTER REFERENCE
+Doreena Joy Borja, LPT
+State University
+09171234567
+"""
+        contact = extract_contact_info(text)
+
+        self.assertEqual(contact["name"], "Gene Elpie L. Landoy")
+        self.assertEqual(contact["phone"], "Unknown Phone")
+
+    def test_institution_does_not_absorb_trailing_city_and_country(self):
+        records = extract_education("""EDUCATION
+Holy Angel University Angeles City, Philippines
+Bachelor of Science in Computer Science - Dean's Lister
+PROJECTS
+Attendance Application
+""")
+
+        self.assertEqual(records[0]["institution"], "Holy Angel University")
+
+    def test_role_date_then_employer_layout_returns_complete_history(self):
+        text = """PROFESSIONAL EXPERIENCE
+Backend Developer and Product Owner (Intern) | Jan 2026 - Apr 2026
+Department of Science and Technology - Regional Developers
+Built backend systems and coordinated delivery.
+Developer and UI/UX Designer | Jul 2024 - Jan 2026
+College of Information and Computing Sciences - DevTeam
+Improved technical proficiency and real-world project experience.
+Infocus Correspondent | Jul 2025 - Jan 2026
+Sentro Publication
+Produced campus news.
+Associate Editor-in-Chief | Jul 2025 - Apr 2026
+Infocus Publication and Broadcasting
+Improved workflow efficiency and output delivery.
+Editor-in-Chief | Jul 2024 - Jul 2025
+Infocus Publication and Broadcasting
+Enhanced audience reach and visual storytelling.
+Head Layout Artist | Jul 2022 - Jul 2024
+Infocus Publication and Broadcasting
+Designed publication layouts.
+CERTIFICATES
+Course Certificate
+"""
+        records = extract_experience_records(text)
+
+        self.assertEqual(len(records), 6)
+        self.assertEqual(records[0]["job_title"], "Backend Developer and Product Owner (Intern)")
+        self.assertEqual(records[-1]["job_title"], "Head Layout Artist")
+        self.assertNotIn("proficiency and real-world project experience", {
+            record["company"] for record in records
+        })
+
+    def test_wrapped_pipe_certifications_are_rejoined(self):
+        text = """CERTIFICATIONS
+Responsive Web Design Certification | CCNA: Introduction to Networks | Data Analytics Essentials | AI
+Fundamentals with IBM SkillsBuild | Cyber Threat Management | JavaScript Essentials 1 |
+CompTIA IT Fundamentals (ITF+)
+"""
+        names = [record["certification_name"] for record in extract_certifications(text)]
+
+        self.assertEqual(len(names), 7)
+        self.assertIn("AI Fundamentals with IBM SkillsBuild", names)
+        self.assertIn("CompTIA IT Fundamentals (ITF+)", names)
+
+    def test_certificate_section_stops_before_projects_and_references(self):
+        text = """CERTIFICATES
+● Civil Service Eligibility
+● Web Development Workshop Certification (Developer Club, Coding
+Bootcamp, 2023)
+RELEVANT COURSEWORK AND PROJECTS
+AI Resume Parser (Python, NLP)
+CHARACTER REFERENCE
+Alex Reyes, LPT
+09171234567
+"""
+        records = extract_certifications(text)
+        names = [record["certification_name"] for record in records]
+
+        self.assertIn("Civil Service Eligibility", names)
+        self.assertIn(
+            "Web Development Workshop Certification (Developer Club, Coding Bootcamp)",
+            names,
+        )
+        self.assertNotIn("AI Resume Parser (Python, NLP)", names)
+        self.assertNotIn("Licensed Professional Teacher", names)
+
+    def test_wrapped_skill_categories_preserve_compound_items(self):
+        skills = extract_resume_skills("""TECHNICAL SKILLS
+Frameworks & Libraries: Flutter (Mobile & Web), FastAPI, NumPy,
+Scikit-Learn
+Core Concepts: Machine Learning, Computer Vision (CNNs), API
+Integration
+CERTIFICATIONS
+Responsive Web Design
+""")
+
+        self.assertIn("Scikit-Learn", skills)
+        self.assertIn("API Integration", skills)
+        self.assertNotIn("Frameworks & Libraries", skills)
+        self.assertNotIn("API", skills)
+        self.assertNotIn("Integration", skills)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
