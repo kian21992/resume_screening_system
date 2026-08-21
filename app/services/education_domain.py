@@ -40,6 +40,7 @@ SECTION_ALIASES = {
     ),
     "experience": (
         r"experience", r"experiences", r"work experience", r"work experiences",
+        r"working experience", r"working experiences",
         r"professional experience", r"employment history", r"work history",
         r"teaching experience", r"teaching experiences", r"faculty experience",
         r"academic experience", r"education experience", r"career history",
@@ -50,7 +51,7 @@ SECTION_ALIASES = {
         r"education", r"educational background", r"education history",
         r"educational history", r"educational qualifications?", r"education details",
         r"academic background", r"academic history", r"academic qualifications?", r"qualifications?",
-        r"degrees?", r"formations?", r"parcours acad[eé]mique",
+        r"degrees?", r"scholastic records?", r"formations?", r"parcours acad[eé]mique",
     ),
     "certifications": (
         r"certifications?", r"certificates?", r"licenses?", r"licensure", r"eligibility",

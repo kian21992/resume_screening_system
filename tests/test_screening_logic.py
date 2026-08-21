@@ -33,6 +33,8 @@ from app.services.extractor import (
     extract_text_from_pdf,
     _extract_page_columns,
     _clean_extracted_text,
+    _select_best_pdf_text,
+    _text_quality_score,
 )
 from app.services.nlp_pipeline import (
     extract_contact_info,
@@ -973,6 +975,74 @@ Certified Scrum Master with 10 years of project management experience.
 
 class TestDocxExtraction(unittest.TestCase):
 
+    def test_footer_contact_details_are_extracted(self):
+        import docx
+
+        document = docx.Document()
+        document.add_paragraph("Professional Summary")
+        document.sections[0].footer.paragraphs[0].text = "maria@example.com"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "footer_resume.docx")
+            document.save(path)
+            extracted = extract_text_from_docx(path)
+
+        self.assertIn("maria@example.com", extracted)
+
+    def test_text_box_content_is_extracted(self):
+        import docx
+        from docx.oxml import OxmlElement
+
+        document = docx.Document()
+        paragraph = document.add_paragraph("Skills")
+        textbox = OxmlElement("w:txbxContent")
+        textbox_paragraph = OxmlElement("w:p")
+        run = OxmlElement("w:r")
+        text = OxmlElement("w:t")
+        text.text = "Python and Data Analysis"
+        run.append(text)
+        textbox_paragraph.append(run)
+        textbox.append(textbox_paragraph)
+        paragraph._p.append(textbox)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "textbox_resume.docx")
+            document.save(path)
+            extracted = extract_text_from_docx(path)
+
+        self.assertIn("Python and Data Analysis", extracted)
+
+    def test_pdf_quality_selector_prefers_structured_text(self):
+        structured = """MARIA SANTOS
+Professional Summary
+Experienced software engineer
+Work Experience
+Software Engineer
+Acme Systems
+2020 - Present
+Education
+Bachelor of Science in Computer Science
+Skills
+Python SQL"""
+        flattened = structured.replace("\n", " ")
+
+        selected, method = _select_best_pdf_text([
+            ("flattened", flattened),
+            ("structured", structured),
+        ])
+
+        self.assertEqual(method, "structured")
+        self.assertEqual(selected, structured)
+
+    def test_pdf_quality_penalizes_concatenated_headings(self):
+        readable = "Work Experience\nSoftware Engineer\nAcme Systems\n2020 - 2024"
+        concatenated = "WORKEXPERIENCE\nSoftware Engineer\nAcme Systems\n2020 - 2024"
+
+        self.assertGreater(
+            _text_quality_score(readable),
+            _text_quality_score(concatenated),
+        )
+
     def test_cleaner_removes_adjacent_duplicate_lines(self):
         raw = "Skills\nClassroom Management\n  classroom   management  \nEducation"
         cleaned = _clean_extracted_text(raw)
@@ -1015,6 +1085,11 @@ class TestDocxExtraction(unittest.TestCase):
         cleaned = _clean_extracted_text("Data\u200bbase Admin\u00adistrator")
 
         self.assertEqual(cleaned, "Database Administrator")
+
+    def test_cleaner_normalizes_private_font_bullets(self):
+        cleaned = _clean_extracted_text("Skills\n\uf06c  Classroom Management")
+
+        self.assertEqual(cleaned, "Skills\n- Classroom Management")
 
     def test_pdf_and_docx_style_date_wrapping_extract_same_experience(self):
         pdf_style = _clean_extracted_text("""
@@ -2708,6 +2783,117 @@ Available upon request
 
 class TestCurrentUploadExtractionRegressions(unittest.TestCase):
     """Generalized regressions derived from the two clean uploaded resumes."""
+
+    def test_level_labelled_education_keeps_every_school(self):
+        text = """EDUCATION
+Primary
+Salacot Elementary School
+2007-2008
+Bancal Elementary School
+2008-2013
+Secondary
+Sto. Tomas High School
+2013-2017
+Mary The Queen College
+2017-2019
+Tertiary
+Guagua National Colleges Inc.
+2019-2023
+WORK EXPERIENCE
+Student Teacher
+"""
+
+        records = extract_education(text)
+
+        self.assertEqual(
+            [(record["degree"], record["institution"]) for record in records],
+            [
+                ("Elementary School", "Salacot Elementary School"),
+                ("Elementary School", "Bancal Elementary School"),
+                ("High School", "Sto. Tomas High School"),
+                ("High School", "Mary The Queen College"),
+                ("Tertiary Education", "Guagua National Colleges Inc"),
+            ],
+        )
+
+    def test_wrapped_certificate_ending_in_preposition_is_one_record(self):
+        records = extract_certifications("""CERTIFICATES
+Member of the Technical Working Group in
+the 2023 CSSPC
+LANGUAGES
+English
+""")
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(
+            records[0]["certification_name"],
+            "Member of the Technical Working Group in the CSSPC",
+        )
+        self.assertEqual(records[0]["date_obtained"], "2023")
+
+    def test_scholastic_and_working_experience_boundaries_prevent_false_rows(self):
+        text = """SCHOLASTIC RECORDS:
+Master's Degree: Master of Arts in Education Major in Filipino
+Don Honorio Ventura State University
+2021 - 2022
+Tertiary: Bachelor in Secondary Education
+Major in Filipino
+Don Honorio Ventura Technological State University
+2014 - 2018
+Secondary: Lubao National High School
+2009 - 2013
+Elementary: Sto. Tomas Elementary School
+2003 - 2009
+SEMINARS and TRAININGS ATTENDED:
+Participant, 1st National Research Conference for Teacher Education
+Don Honorio Ventura State University
+December 14, 2021
+WORKING EXPERIENCE:
+College Instructor I
+BSEd Filipino Coordinator
+Newsletter Adviser (LUALU)
+September 1, 2022 - PRESENT
+Don Honorio Ventura State University
+Senior High School Teacher
+June 2019 - May 2022
+GUAGUA NATIONAL COLLEGES Inc.
+Volunteer Teacher
+Summer Pre-Kindergarten Program (SPKP)
+April - May 2019
+New Era University
+Quezon City, Philippines
+Senior High School Teacher
+June 2018 - March 2019
+AMA Computer Learning Center Inc.
+PERSONAL DATA:
+Age: 26
+"""
+
+        education = extract_education(text)
+        experience = extract_experience_records(text)
+
+        self.assertEqual(len(education), 4)
+        self.assertEqual(len(experience), 4)
+        self.assertEqual(
+            experience[0]["job_title"],
+            "College Instructor I / BSEd Filipino Coordinator / Newsletter Adviser (LUALU)",
+        )
+        self.assertEqual(experience[0]["company"], "Don Honorio Ventura State University")
+        self.assertIn(
+            {
+                "job_title": "Volunteer Teacher",
+                "company": "New Era University",
+                "location": "Quezon City, Philippines",
+                "years": 0.08,
+            },
+            experience,
+        )
+        false_companies = {
+            "BSEd Filipino Coordinator",
+            "Cabambangan Villa de Bacolor",
+            "Summer Pre-Kindergarten Program (SPKP)",
+        }
+        self.assertTrue(false_companies.isdisjoint({record["company"] for record in experience}))
 
     def test_header_name_is_not_reconstructed_from_na_project_text(self):
         text = """HERO D. PARK

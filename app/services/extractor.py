@@ -1,5 +1,76 @@
 import os
 import re
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+
+_SECTION_HEADING_RE = re.compile(
+    r"(?im)^\s*(?:professional\s+summary|summary|profile|education|"
+    r"(?:professional|work(?:ing)?|teaching|employment)\s+experience|experience|"
+    r"technical\s+skills|skills(?:\s*(?:&|and)\s*qualities)?|"
+    r"certifications?|certificates?|licenses?|projects?|contact|"
+    r"personal\s+(?:information|data)|scholastic\s+records?)\s*:?[ \t]*$"
+)
+
+
+def _text_quality_score(text):
+    """Estimate whether extracted resume text is readable and well structured."""
+    if not text or not text.strip():
+        return float('-inf')
+
+    cleaned = _clean_extracted_text(text)
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    words = re.findall(r"[A-Za-z][A-Za-z'\-]*", cleaned)
+    if not words:
+        return float('-inf')
+
+    visible_chars = [char for char in cleaned if not char.isspace()]
+    alpha_ratio = (
+        sum(char.isalpha() for char in visible_chars) / len(visible_chars)
+        if visible_chars else 0
+    )
+    section_count = len(_SECTION_HEADING_RE.findall(cleaned))
+    contact_count = int(bool(re.search(r'[\w.+-]+@[\w.-]+\.\w{2,}', cleaned)))
+    contact_count += int(bool(re.search(r'(?:\+?\d[\d ()-]{7,}\d)', cleaned)))
+    date_count = len(re.findall(r'\b(?:19|20)\d{2}\b', cleaned))
+    private_glyphs = len(re.findall(r'[\uE000-\uF8FF\uFFFD]', cleaned))
+    flattened_chars = sum(max(0, len(line) - 220) for line in lines)
+    concatenated_headings = len(re.findall(
+        r'\b(?:WORKEXPERIENCE|PROFESSIONALSUMMARY|TECHNICALSKILLS|'
+        r'PERSONALINFORMATION|EDUCATIONALBACKGROUND)\b',
+        cleaned,
+        flags=re.IGNORECASE,
+    ))
+    punctuation_spacing = len(re.findall(r'\s+[,.!?;:]', cleaned))
+
+    return (
+        min(len(words), 1200) * 0.035
+        + min(len(lines), 120) * 0.18
+        + section_count * 5
+        + contact_count * 2.5
+        + min(date_count, 20) * 0.35
+        + alpha_ratio * 8
+        - private_glyphs * 1.5
+        - flattened_chars * 0.035
+        - concatenated_headings * 5
+        - punctuation_spacing * 0.12
+    )
+
+
+def _select_best_pdf_text(candidates):
+    """Return the highest-quality non-empty extraction and its method name."""
+    usable = [
+        (method, text, _text_quality_score(text))
+        for method, text in candidates
+        if text and text.strip()
+    ]
+    if not usable:
+        return None, None
+
+    method, text, _score = max(usable, key=lambda item: item[2])
+    return text, method
 
 
 def _words_to_lines(words, y_tolerance=3):
@@ -169,30 +240,27 @@ def _extract_pdf_pypdf2(filepath):
 
 def extract_text_from_pdf(filepath):
     """
-    Tries pdfplumber first; falls back to PyPDF2 if the result is empty or errors.
+    Runs both supported PDF parsers and keeps the more readable result.
     Also applies post-processing to fix common PDF artefacts:
       - Merges lines that were broken mid-word (soft hyphens)
       - Collapses excessive blank lines
       - Normalises whitespace
     """
-    text = ""
-
-    # Strategy 1: pdfplumber
-    try:
-        text = _extract_pdf_pdfplumber(filepath)
-    except Exception as e:
-        print(f"[extractor] pdfplumber failed ({e}), falling back to PyPDF2")
-
-    # Strategy 2: PyPDF2 fallback
-    if not text or len(text.strip()) < 50:
+    candidates = []
+    for method, extractor in (
+        ('pdfplumber', _extract_pdf_pdfplumber),
+        ('PyPDF2', _extract_pdf_pypdf2),
+    ):
         try:
-            text = _extract_pdf_pypdf2(filepath)
-        except Exception as e:
-            print(f"[extractor] PyPDF2 also failed: {e}")
-            return None
+            candidates.append((method, extractor(filepath)))
+        except Exception as exc:
+            logger.warning('%s extraction failed for %s: %s', method, filepath, exc)
 
-    if not text or not text.strip():
+    text, method = _select_best_pdf_text(candidates)
+    if not text:
         return None
+
+    logger.debug('Selected %s extraction for %s', method, filepath)
 
     return _clean_extracted_text(text)
 
@@ -206,8 +274,8 @@ def extract_text_from_docx(filepath):
     Extracts all text from a DOCX file including:
       - Regular paragraphs (body text, headings, bullet points)
       - Text inside table cells (skills matrices, experience tables, etc.)
-      - Text boxes are not directly accessible via python-docx but the above
-        covers the vast majority of resume content.
+      - Header and footer content
+      - Text stored in DrawingML/VML text boxes
     """
     import docx
     from docx.oxml.table import CT_Tbl
@@ -217,6 +285,28 @@ def extract_text_from_docx(filepath):
 
     doc = docx.Document(filepath)
     parts = []
+
+    def _textbox_texts(element):
+        """Recover text that python-docx omits from Paragraph.text."""
+        values = []
+        for container in element.xpath('.//*[local-name()="txbxContent"]'):
+            text = ' '.join(
+                node.text.strip()
+                for node in container.xpath('.//*[local-name()="t"]')
+                if node.text and node.text.strip()
+            )
+            text = re.sub(r'\s+', ' ', text).strip()
+            if text:
+                values.append(text)
+        return values
+
+    def _append_paragraph(paragraph):
+        paragraph_text = paragraph.text.strip()
+        if paragraph_text:
+            parts.append(paragraph_text)
+        for textbox_text in _textbox_texts(paragraph._p):
+            if textbox_text != paragraph_text:
+                parts.append(textbox_text)
 
     def _append_table(table):
         rows = []
@@ -228,9 +318,15 @@ def extract_text_from_docx(filepath):
                 if cell_id in seen_cells:
                     continue
                 seen_cells.add(cell_id)
+                cell_parts = []
                 cell_text = cell.text.strip()
                 if cell_text:
-                    row_cells.append(cell_text)
+                    cell_parts.append(cell_text)
+                for textbox_text in _textbox_texts(cell._tc):
+                    if textbox_text not in cell_parts:
+                        cell_parts.append(textbox_text)
+                if cell_parts:
+                    row_cells.append('\n'.join(cell_parts))
             if row_cells:
                 rows.append(row_cells)
 
@@ -293,26 +389,45 @@ def extract_text_from_docx(filepath):
             parts.append("  ".join(row))
 
     # 1. Read header content first because resumes often place contact details there.
+    def _append_story(story):
+        for child in story._element.iterchildren():
+            if isinstance(child, CT_P):
+                _append_paragraph(Paragraph(child, story))
+            elif isinstance(child, CT_Tbl):
+                _append_table(Table(child, story))
+
     seen_headers = set()
     for section in doc.sections:
-        header_id = id(section.header._element)
-        if header_id in seen_headers:
-            continue
-        seen_headers.add(header_id)
-        for para in section.header.paragraphs:
-            if para.text.strip():
-                parts.append(para.text.strip())
-        for table in section.header.tables:
-            _append_table(table)
+        for header in (
+            section.header,
+            section.first_page_header,
+            section.even_page_header,
+        ):
+            header_id = id(header._element)
+            if header_id in seen_headers:
+                continue
+            seen_headers.add(header_id)
+            _append_story(header)
 
     # 2. Tables — iterate every cell in every row of every table
     for child in doc.element.body.iterchildren():
         if isinstance(child, CT_P):
-            paragraph = Paragraph(child, doc)
-            if paragraph.text.strip():
-                parts.append(paragraph.text.strip())
+            _append_paragraph(Paragraph(child, doc))
         elif isinstance(child, CT_Tbl):
             _append_table(Table(child, doc))
+
+    seen_footers = set()
+    for section in doc.sections:
+        for footer in (
+            section.footer,
+            section.first_page_footer,
+            section.even_page_footer,
+        ):
+            footer_id = id(footer._element)
+            if footer_id in seen_footers:
+                continue
+            seen_footers.add(footer_id)
+            _append_story(footer)
 
     text = "\n".join(parts)
     return _clean_extracted_text(text) if text.strip() else None
@@ -341,6 +456,7 @@ def _clean_extracted_text(text):
     text = text.replace('\u2014', '-') # em dash
     text = text.replace('\u2022', '-') # bullet •
     text = text.replace('\uf0b7', '-') # Wingdings bullet
+    text = text.replace('\uf06c', '-') # common private-font bullet
     text = text.replace('\u200b', '')  # zero-width space
     text = text.replace('\u00ad', '')  # soft hyphen
 

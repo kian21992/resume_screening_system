@@ -28,7 +28,7 @@ PHONE_RE = re.compile(
 
 RESUME_SECTION_RE = re.compile(
     r'^\s*(objective|summary|profile|professional\s+summary|technical\s+skills|skills|'
-    r'education|work\s+experience|professional\s+experience|teaching\s+experience|'
+    r'education|scholastic\s+records?|work(?:ing)?\s+experience|professional\s+experience|teaching\s+experience|'
     r'academic\s+experience|faculty\s+experience|experience|projects?|'
     r'certifications?|certificates?|licenses?|licensure|eligibility|trainings?|seminars?|awards?|'
     r'achievements?|references?|interests?|activities|affiliations?|publications?|'
@@ -179,6 +179,10 @@ def extract_certifications(text):
                 and (
                     previous.count('(') > previous.count(')')
                     or '|' in previous
+                    or re.search(
+                        r'(?i)\b(?:in|of|for|and|on|at|to|the)\s*$',
+                        previous,
+                    )
                 )
             )
             if should_continue:
@@ -1351,6 +1355,48 @@ def extract_education(text):
                 record['degree'] = rebuilt_bachelor[:255]
                 break
 
+    # Level-labelled school histories may omit a formal credential name and
+    # list more than one institution under Primary, Secondary, or Tertiary.
+    # Preserve those explicit labels instead of borrowing a degree from some
+    # other line or silently dropping the institution.
+    level_heading_re = re.compile(
+        r'(?i)^(?:primary|elementary|secondary|tertiary)(?:\s+(?:level|education))?\s*:?$'
+    )
+    level_headings = [
+        index for index, value in enumerate(scan_lines)
+        if level_heading_re.fullmatch(value.strip())
+    ]
+    if len(level_headings) >= 2:
+        labelled_records = []
+        level_degree = {
+            'primary': 'Elementary School',
+            'elementary': 'Elementary School',
+            'secondary': 'High School',
+            'tertiary': 'Tertiary Education',
+        }
+        for heading_position, start in enumerate(level_headings):
+            end = (
+                level_headings[heading_position + 1]
+                if heading_position + 1 < len(level_headings)
+                else len(scan_lines)
+            )
+            normalized_level = re.match(
+                r'(?i)^(primary|elementary|secondary|tertiary)',
+                scan_lines[start].strip(),
+            ).group(1).casefold()
+            for value in scan_lines[start + 1:end]:
+                institution = _extract_institution(
+                    value.strip(),
+                    allow_org_fallback=False,
+                )
+                if institution:
+                    labelled_records.append({
+                        'degree': level_degree[normalized_level],
+                        'institution': institution,
+                    })
+        if labelled_records:
+            records = labelled_records
+
     # Some CV templates explicitly label four education levels. Treat the
     # Junior/Senior High lines as details of "High School Graduate", preserve
     # "College Graduate" literally, and do not infer a degree from work text.
@@ -1661,10 +1707,25 @@ def extract_experience_records(text):
     # PDF line wrapping can split the final year from a full date range:
     # ``July 31, 2024 - July 31,`` / ``2025``. Rejoin only that narrow pattern
     # so ordinary neighboring lines retain their record boundaries.
+    shared_year_month_range_re = re.compile(
+        r'(?i)\b(?P<start>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+        r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|'
+        r'Nov(?:ember)?|Dec(?:ember)?)\s*(?:-|\u2013|\u2014|to)\s*'
+        r'(?P<end>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+        r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|'
+        r'Nov(?:ember)?|Dec(?:ember)?)\s+(?P<year>(?:19|20)\d{2})\b'
+    )
     normalized_scan_lines = []
     line_index = 0
     while line_index < len(scan_lines):
         current_line = scan_lines[line_index]
+        current_line = shared_year_month_range_re.sub(
+            lambda match: (
+                f"{match.group('start')} {match.group('year')} - "
+                f"{match.group('end')} {match.group('year')}"
+            ),
+            current_line,
+        )
         next_line = scan_lines[line_index + 1].strip() if line_index + 1 < len(scan_lines) else ''
         if (
             re.search(r'(?i)\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
@@ -2083,6 +2144,13 @@ def extract_experience_records(text):
     # This avoids reversing a title and company when a DOCX table is flattened.
     structured_records = []
 
+    def _has_organization_hint(value):
+        return bool(re.search(
+            r'(?i)\b(?:university|college|school|academy|institute|center|centre|'
+            r'inc\.?|corporation|company|department|deped|foundation|authority)\b',
+            value or '',
+        ))
+
     def _plausible_company(value):
         value = (value or '').strip()
         return (
@@ -2157,6 +2225,51 @@ def extract_experience_records(text):
             'location': location or inline_location or 'Not Identified',
             'years': years,
         })
+
+    # Some traditional CVs list several concurrent roles before the date and
+    # put the employer after it. Anchor the record to the strong organization
+    # line instead of treating neighboring role or location lines as employers.
+    for date_index, date_line in enumerate(scan_lines):
+        if not DATE_RANGE_RE.search(date_line):
+            continue
+        company_index = date_index + 1
+        while company_index < len(scan_lines) and not scan_lines[company_index].strip():
+            company_index += 1
+        if company_index >= len(scan_lines):
+            continue
+        company = scan_lines[company_index].strip()
+        if (not _has_organization_hint(company)
+                or not _plausible_company(company)
+                or _is_probable_title(company)):
+            continue
+
+        titles = []
+        skipped_non_title = 0
+        for position in range(date_index - 1, max(-1, date_index - 6), -1):
+            candidate = scan_lines[position].strip()
+            if not candidate:
+                if titles:
+                    break
+                continue
+            if DATE_RANGE_RE.search(candidate) or RESUME_SECTION_RE.match(candidate):
+                break
+            if _is_probable_title(candidate):
+                titles.append(candidate)
+                continue
+            if titles:
+                break
+            skipped_non_title += 1
+            if skipped_non_title > 1:
+                break
+        if not titles:
+            continue
+
+        location = None
+        if company_index + 1 < len(scan_lines):
+            possible_location = scan_lines[company_index + 1].strip()
+            if _looks_like_location_line(possible_location):
+                location = possible_location
+        _add_structured(' / '.join(reversed(titles)), company, date_line, location)
 
     # Role and date on one line, employer on the next. This is common in clean
     # single-column CVs: ``Backend Developer | Jan 2024 - Apr 2024`` followed
@@ -2277,6 +2390,7 @@ def extract_experience_records(text):
             TITLE_KEYWORDS.search(previous)
             and not DATE_RANGE_RE.search(previous)
             and _plausible_company(previous_two)
+            and not following_is_employer
         ):
             _add_structured(previous, previous_two, stripped)
             continue
@@ -2319,7 +2433,7 @@ def extract_experience_records(text):
                 or DATE_RANGE_RE.search(title) or index + 1 >= len(scan_lines)):
             continue
         company = scan_lines[index + 1].strip()
-        if not _plausible_company(company):
+        if not _plausible_company(company) or _is_probable_title(company):
             continue
         for lookahead in range(index + 2, min(len(scan_lines), index + 22)):
             candidate_date = scan_lines[lookahead].strip()
@@ -2342,6 +2456,16 @@ def extract_experience_records(text):
     # from being selected as the employer.
     for date_index, line in enumerate(scan_lines):
         if not DATE_RANGE_RE.search(line):
+            continue
+        following_company = (
+            scan_lines[date_index + 1].strip()
+            if date_index + 1 < len(scan_lines) else ''
+        )
+        if (
+            _has_organization_hint(following_company)
+            and _plausible_company(following_company)
+            and not _is_probable_title(following_company)
+        ):
             continue
         title_index = next((
             position
@@ -2383,6 +2507,16 @@ def extract_experience_records(text):
     # recent teaching/faculty title, but only for a clearly named institution.
     for index, line in enumerate(scan_lines):
         if not DATE_RANGE_RE.search(line):
+            continue
+        following_company = (
+            scan_lines[index + 1].strip()
+            if index + 1 < len(scan_lines) else ''
+        )
+        if (
+            _has_organization_hint(following_company)
+            and _plausible_company(following_company)
+            and not _is_probable_title(following_company)
+        ):
             continue
         company_hint = None
         for back in range(index - 1, max(-1, index - 20), -1):
@@ -2623,6 +2757,20 @@ def extract_experience_records(text):
     # at least one (but not every) job.
     record_candidates = [*structured_records, *records]
     structured_count = len(structured_records)
+
+    def employer_quality(item):
+        company = (item.get('company') or '').casefold()
+        score = 0
+        if _has_organization_hint(company):
+            score += 3
+        if company == (item.get('job_title') or '').casefold():
+            score -= 4
+        if re.search(r'(?i)\b(?:activities|students|duties|summary|among|community)\b', company):
+            score -= 3
+        if company == 'not identified':
+            score -= 2
+        return score
+
     for candidate_index, rec in enumerate(record_candidates):
         if (not rec.get('job_title') or re.search(
             r'(?i)dean.?s\s+lister|president.?s\s+lister|with\s+honors|magna\s+cum\s+laude',
@@ -2634,6 +2782,14 @@ def extract_experience_records(text):
             not company_value
             or re.match(r'^[\W_]', company_value)
             or re.fullmatch(r'(?i)(?:n/?a|none|unknown)', company_value)
+            or (
+                _is_probable_title(company_value)
+                and not re.search(
+                    r'(?i)\b(?:university|school|academy|institute|center|centre|'
+                    r'inc\.?|corporation|company|department|deped|foundation|authority)\b',
+                    company_value,
+                )
+            )
         ):
             continue
         if any(
@@ -2664,29 +2820,26 @@ def extract_experience_records(text):
         if not is_valid:
             continue
         key = (rec['job_title'].lower(), rec['company'].lower())
+        overlapping_title = next((
+            existing for existing in unique_records
+            if abs(float(existing.get('years') or 0) - float(rec.get('years') or 0)) < 0.05
+            and (rec.get('job_title') or '').casefold() in existing['job_title'].casefold()
+            and employer_quality(existing) > employer_quality(rec)
+        ), None)
+        if overlapping_title is not None:
+            continue
         same_role_index = next((
             index for index, existing in enumerate(unique_records)
             if existing['job_title'].casefold() == rec['job_title'].casefold()
             and abs(float(existing.get('years') or 0) - float(rec.get('years') or 0)) < 0.05
         ), None)
         if same_role_index is not None:
-            def employer_quality(item):
-                company = (item.get('company') or '').casefold()
-                score = 0
-                if re.search(r'\b(?:school|academy|college|university|inc|corporation|company|deped)\b', company):
-                    score += 3
-                if company == (item.get('job_title') or '').casefold():
-                    score -= 4
-                if re.search(r'(?i)\b(?:activities|students|duties|summary|among|community)\b', company):
-                    score -= 3
-                if company == 'not identified':
-                    score -= 2
-                return score
             existing_record = unique_records[same_role_index]
             existing_quality = employer_quality(existing_record)
             new_quality = employer_quality(rec)
             same_company = existing_record['company'].casefold() == rec['company'].casefold()
-            if not same_company and existing_quality >= 0 and new_quality >= 0:
+            if (not same_company and existing_quality >= 0 and new_quality >= 0
+                    and existing_quality == new_quality):
                 same_role_index = None
             elif new_quality > existing_quality:
                 old = unique_records[same_role_index]
