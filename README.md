@@ -78,6 +78,12 @@ Password: password123
 Role: Manager
 ```
 
+```text
+Username: system_admin
+Password: password123
+Role: Admin
+```
+
 These are local demonstration credentials. Change them before deploying the
 application and never use the sample passwords on a public server.
 
@@ -90,8 +96,8 @@ application and never use the sample passwords on a public server.
 | Create or edit jobs | No | Yes | Yes |
 | Delete jobs or candidates | No | No | Yes |
 
-The initializer does not create an admin account. Assign the admin role to an
-existing trusted user with:
+The initializer creates `system_admin` for local demonstrations. You can also
+assign the admin role to another existing trusted user with:
 
 ```bash
 python -m flask --app app set-user-role it_manager admin

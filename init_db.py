@@ -9,15 +9,42 @@ with app.app_context():
     print("Creating tables...")
     db.create_all()
 
-    # Check if we already have users
-    if not User.query.first():
+    # Ensure every local installation has the documented demonstration users.
+    # Existing accounts keep their passwords and roles; only missing accounts
+    # are created. This makes the initializer safe to rerun after pulling an
+    # update without overwriting local account changes.
+    database_had_users = User.query.first() is not None
+    default_accounts = (
+        ('hr_admin', 'password123', 'hr'),
+        ('it_manager', 'password123', 'manager'),
+        ('system_admin', 'password123', 'admin'),
+    )
+    default_users = {}
+    created_usernames = []
+    for username, password, role in default_accounts:
+        user = User.query.filter_by(username=username).first()
+        if user is None:
+            user = User(
+                username=username,
+                password_hash=bcrypt.generate_password_hash(password).decode('utf-8'),
+                role=role,
+            )
+            db.session.add(user)
+            created_usernames.append(username)
+        default_users[username] = user
+    db.session.commit()
+
+    if created_usernames:
+        print(f"Created default user(s): {', '.join(created_usernames)}")
+    else:
+        print("Default users already exist, skipping account creation.")
+
+    # Preserve the original behavior: sample jobs are populated only for a
+    # fresh database, while missing default accounts can still be added to an
+    # existing installation.
+    if not database_had_users:
         print("Populating dummy data...")
-        
-        # Create users
-        hr_user = User(username='hr_admin', password_hash=bcrypt.generate_password_hash('password123').decode('utf-8'), role='hr')
-        manager_user = User(username='it_manager', password_hash=bcrypt.generate_password_hash('password123').decode('utf-8'), role='manager')
-        db.session.add_all([hr_user, manager_user])
-        db.session.commit()
+        hr_user = default_users['hr_admin']
 
         # Create dummy jobs
         job1 = JobDescription(
