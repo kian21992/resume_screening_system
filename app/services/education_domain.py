@@ -88,7 +88,9 @@ _DATE_RE = re.compile(
 _DUTY_START_RE = re.compile(
     r"(?i)^(?:responsible|managed|developed|created|implemented|prepared|"
     r"provided|assisted|collaborated|communicated|conducted|facilitated|"
-    r"maintained|organized|coordinated|handled|taught|designed|supported)\b"
+    r"maintained|organized|coordinated|handled|taught|designed|supported|"
+    r"encourag(?:e|ed|ing)|ensur(?:e|ed|ing)|observ(?:e|ed|ing)|"
+    r"supervis(?:e|ed|ing)|participat(?:e|ed|ing)|promot(?:e|ed|ing))\b"
 )
 _EDUCATION_ROLE_RE = re.compile(
     r"(?i)\b(?:teacher|instructor|professor|lecturer|educator|tutor|faculty|"
@@ -240,7 +242,9 @@ def validate_experience_record(record):
     if company != "Not Identified" and (re.match(r"^[\W_]", company) or "@" in company):
         return False, "malformed employer"
     try:
-        if float(years or 0) <= 0 or float(years) > 50:
+        duration = float(years or 0)
+        duration_unknown = bool(record.get("duration_unknown"))
+        if duration < 0 or duration > 50 or (duration == 0 and not duration_unknown):
             return False, "invalid duration"
     except (TypeError, ValueError):
         return False, "invalid duration"

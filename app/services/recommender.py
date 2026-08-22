@@ -521,6 +521,10 @@ def _split_top_level_skill_items(value):
                 _re.search(r",\s*(?:and|or)\b", structural_item, _re.I)
                 and first_words >= 2
             )
+            or (
+                _re.search(r"(?i)\bskills?$", structural_item)
+                and 2 <= len(structural_item.split(",")) <= 4
+            )
         )
         if comma_phrase or "," not in structural_item:
             items.append(structural_item)
@@ -554,7 +558,15 @@ def _split_top_level_skill_items(value):
 
 def _skill_section_items(line):
     """Return display-ready items from one explicit skill-section row."""
-    line = _re.sub(r"^\s*[-*•·\uf06c\uf0b7]\s*", "", line or "").strip()
+    had_bullet = bool(_SKILL_BULLET_RE.match(line or ""))
+    line = _re.sub(
+        r"^\s*(?:[-*•·\u2022\u25aa\u25cf\uf06c\uf0b7]|\(cid\s*[:;,]?\s*\d+\))\s*",
+        "",
+        line or "",
+        flags=_re.IGNORECASE,
+    ).strip()
+    if had_bullet:
+        line = _re.sub(r"\s+", " ", line)
     if not line:
         return []
 
@@ -598,7 +610,10 @@ def _skill_section_items(line):
     return [item for item in items if _valid_section_skill(item)]
 
 
-_SKILL_BULLET_RE = _re.compile(r"^\s*[-*•·\uf06c\uf0b7]\s*")
+_SKILL_BULLET_RE = _re.compile(
+    r"^\s*(?:[-*•·\u2022\u25aa\u25cf\uf06c\uf0b7]|\(cid\s*[:;,]?\s*\d+\))\s*",
+    _re.IGNORECASE,
+)
 _WRAPPED_SKILL_PREFIX_RE = _re.compile(
     r"^(?:curriculum\s+and|verbal\s+and|modifying\b|integrating\b|utilizing\b"
     r"|providing\b|excellent\s+in\b)",
@@ -619,6 +634,10 @@ def _should_join_wrapped_skill(previous, continuation, joined_lines=0):
         return False
     if _SKILL_SECTION_HEADER_RE.match(continuation) or _NON_SKILL_SECTION_RE.match(continuation):
         return False
+    # PDF extractors frequently preserve the bullet only on the first physical
+    # line. Lowercase lines that follow it are continuations, not new skills.
+    if continuation[:1].islower():
+        return joined_lines < 4
     if _WRAPPED_SKILL_END_RE.search(previous):
         return True
     if not _WRAPPED_SKILL_PREFIX_RE.match(previous):
@@ -641,6 +660,13 @@ def extract_resume_skills(resume_text, additional_skills=None):
     The returned list is informational and does not affect scoring.
     """
     text = resume_text or ""
+    # Some embedded PDF fonts expose list glyphs as a standalone ``(cid:0)``
+    # line. Attach that marker to the following text so it behaves as a bullet.
+    text = _re.sub(
+        r"(?mi)^\s*\(cid\s*[:;,]?\s*\d+\)\s*\r?\n\s*(?=\S)",
+        "• ",
+        text,
+    )
     text = _re.sub(
         r'(?m)^([^\n]{3,60}(?:&|and)\s+[A-Za-z]+)\n(?=[a-z])',
         r'\1 ',
@@ -1703,9 +1729,18 @@ def estimate_decision_confidence(recommendation_label, resume_text, contact_info
         strengths.append("critical-skill evidence was found")
 
     if experience_req and experience_req > 0:
-        if extracted_exp or total_exp_years > 0:
+        has_dated_experience = any(
+            float(record.get("years") or 0) > 0
+            for record in extracted_exp if isinstance(record, dict)
+        )
+        if has_dated_experience or total_exp_years > 0:
             score += 10
             strengths.append("work experience evidence was detected")
+        elif extracted_exp:
+            score -= 8
+            concerns.append(
+                "work roles were detected but their dates were not provided, so duration cannot be verified"
+            )
         else:
             concerns.append("work experience requirement exists but no work history was extracted")
 
