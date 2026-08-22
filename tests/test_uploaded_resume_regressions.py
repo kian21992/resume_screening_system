@@ -44,6 +44,31 @@ WORK EXPERIENCE:
     ]
 
 
+def test_other_educational_achievements_heading_stops_skill_extraction():
+    text = """SKILLS
+Computer Literate (Microsoft Software
+Application)
+Effective Written Communication
+Oral Communication Skills
+Classroom Management
+Critical Thinking Skills
+Reliable
+OTHER EDUCATIONAL ACHIEVEMENTS AND EXPERIENCES
+Licensed Professional Teacher Board Passer
+Academic Excellence Award
+CHARACTER REFERENCES
+"""
+
+    assert extract_resume_skills(text) == [
+        "Computer Literate (Microsoft Software Application)",
+        "Effective Written Communication",
+        "Oral Communication Skills",
+        "Classroom Management",
+        "Critical Thinking Skills",
+        "Reliable",
+    ]
+
+
 def test_specific_degrees_survive_generic_level_headings():
     text = """EDUCATIONAL BACKGROUND
 POST-GRADUATE

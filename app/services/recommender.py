@@ -208,7 +208,9 @@ _NON_SKILL_SECTION_RE = _re.compile(
     r"|work\s+experience|professional\s+experience|experience"
     r"|employment(?:\s+history)?|projects?|certifications?|licenses?|trainings?"
     r"|professional\s+trainings?(?:\s+and\s+certifications?)?"
-    r"|seminars?|awards?|achievements?|references?|personal\s+(?:information|data)"
+    r"|seminars?|awards?|achievements?"
+    r"|other\s+educational\s+achievements\s+and\s+experiences"
+    r"|references?|personal\s+(?:information|data)"
     r"|interests?|activities|affiliations?|publications?|volunteer(?:ing)?(?:\s+experience)?"
     r"|organizations?|professional\s+development)"
     r"(?:\s*:\s*.*)?\s*$",
@@ -626,6 +628,21 @@ _WRAPPED_SKILL_END_RE = _re.compile(
 )
 
 
+def _is_parenthesized_skill_continuation(previous, continuation):
+    """Return true when a short line closes a qualifier split by the PDF."""
+    previous = _SKILL_BULLET_RE.sub("", previous or "").strip()
+    continuation = (continuation or "").strip()
+    return bool(
+        previous
+        and continuation
+        and len(continuation.split()) <= 5
+        and previous.count("(") > previous.count(")")
+        and continuation.count(")") > continuation.count("(")
+        and not _SKILL_SECTION_HEADER_RE.match(continuation)
+        and not _NON_SKILL_SECTION_RE.match(continuation)
+    )
+
+
 def _should_join_wrapped_skill(previous, continuation, joined_lines=0):
     """Detect a PDF-wrapped continuation of an explicit bullet item."""
     previous = _SKILL_BULLET_RE.sub("", previous or "").strip()
@@ -634,6 +651,15 @@ def _should_join_wrapped_skill(previous, continuation, joined_lines=0):
         return False
     if _SKILL_SECTION_HEADER_RE.match(continuation) or _NON_SKILL_SECTION_RE.match(continuation):
         return False
+    # A PDF line break can split a parenthesized qualifier from its skill, as
+    # in ``Computer Literate (Microsoft Software`` + ``Application)``. Only
+    # join when the prior line has an unmatched opening parenthesis and this
+    # short continuation closes it, so neighboring standalone skills remain
+    # separate.
+    if joined_lines == 0 and _is_parenthesized_skill_continuation(
+        previous, continuation
+    ):
+        return True
     # PDF extractors frequently preserve the bullet only on the first physical
     # line. Lowercase lines that follow it are continuations, not new skills.
     if continuation[:1].islower():
@@ -748,6 +774,12 @@ def extract_resume_skills(resume_text, additional_skills=None):
             rebuilt_lines.append(raw_line)
             continue
         if rebuilding_skill_section:
+            if (
+                rebuilt_lines
+                and _is_parenthesized_skill_continuation(rebuilt_lines[-1], line)
+            ):
+                rebuilt_lines[-1] = f"{rebuilt_lines[-1].rstrip()} {line}"
+                continue
             labelled = _re.match(r"^([^:]{1,55}):\s*(.+)$", line)
             prefixed_category = _SKILL_CATEGORY_PREFIX_RE.match(line)
             is_category_row = bool(
