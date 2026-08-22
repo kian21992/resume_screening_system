@@ -1,4 +1,5 @@
 from app.services.education_domain import validate_experience_record
+from app.services.extractor import _select_best_pdf_text, _text_quality_score
 from app.services.nlp_pipeline import extract_education, extract_experience_records
 from app.services.recommender import extract_resume_skills, estimate_decision_confidence
 
@@ -247,3 +248,51 @@ PERSONAL INFORMATION
             "Angeles City, Pampanga",
         ),
     ]
+
+
+def test_pdf_selector_rejects_work_heading_orphaned_after_its_entries():
+    correctly_ordered = """JOYCE ANN R. PINEDA
+WORK EXPERIENCE
+Public Senior High School Teacher
+August 29, 2023 - Present
+Pampanga High School
+Senior High School Teacher
+January 13, 2021 - May 31, 2023
+Colegio De Sebastian Pampanga Inc.
+EDUCATION
+Bachelor of Secondary Education
+City College of San Fernando
+SKILLS
+Classroom Management
+Lesson Planning
+"""
+    wrong_column_order = correctly_ordered.replace("WORK EXPERIENCE\n", "")
+    wrong_column_order += "Additional sidebar contact detail\nWORK EXPERIENCE\n"
+
+    assert _text_quality_score(correctly_ordered) > _text_quality_score(
+        wrong_column_order
+    )
+
+    selected, method = _select_best_pdf_text([
+        ("pdfplumber", correctly_ordered),
+        ("PyPDF2", wrong_column_order),
+    ])
+
+    assert method == "pdfplumber"
+    assert selected == correctly_ordered
+
+
+def test_role_then_date_employer_and_location_preserves_complete_record():
+    text = """WORK EXPERIENCE
+Customer Service Associate
+2020 - 2021 - Concentrix
+Clark Freeport Zone, Pampanga, Philippines
+EDUCATION
+"""
+
+    assert extract_experience_records(text) == [{
+        "job_title": "Customer Service Associate",
+        "company": "Concentrix",
+        "location": "Clark Freeport Zone, Pampanga, Philippines",
+        "years": 1.0,
+    }]

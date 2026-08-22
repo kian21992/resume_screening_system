@@ -2264,6 +2264,12 @@ def extract_experience_records(text):
             value,
         ):
             return True
+        if re.fullmatch(
+            r'(?i)[A-Za-z .-]{2,80}\s*,\s*[A-Za-z .-]{2,50}\s*,\s*'
+            r'(?:Philippines|United States|UAE|India|Colombia|Canada|Australia)',
+            value,
+        ):
+            return True
         if LOCATION_LINE_RE.search(value):
             return True
         if re.match(
@@ -2594,6 +2600,21 @@ def extract_experience_records(text):
             and not _is_probable_title(following)
             and not DATE_RANGE_RE.search(following)
         )
+        # Compact rows may put the employer after the date while keeping the
+        # role above and the location below: ``2020-2021 - Concentrix``. The
+        # surrounding title and location provide enough structure to treat the
+        # date-line remainder as the employer without guessing from prose.
+        if (
+            remainder
+            and not remainder.startswith('(')
+            and _is_probable_title(previous)
+            and _plausible_company(remainder)
+            and not _is_probable_title(remainder)
+            and following
+            and _looks_like_location_line(following)
+        ):
+            _add_structured(previous, remainder, stripped, following)
+            continue
         if (remainder and TITLE_KEYWORDS.search(remainder)
                 and _plausible_company(previous) and not following_is_employer):
             _add_structured(remainder, previous, stripped)
@@ -3082,6 +3103,15 @@ def extract_experience_records(text):
             if (not same_company and existing_quality >= 0 and new_quality >= 0
                     and existing_quality == new_quality):
                 same_role_index = None
+            elif (
+                same_company
+                and (existing_record.get('location') or 'Not Identified') == 'Not Identified'
+                and (rec.get('location') or 'Not Identified') != 'Not Identified'
+            ):
+                old = unique_records[same_role_index]
+                seen.discard((old['job_title'].lower(), old['company'].lower()))
+                unique_records[same_role_index] = rec
+                seen.add(key)
             elif new_quality > existing_quality:
                 old = unique_records[same_role_index]
                 seen.discard((old['job_title'].lower(), old['company'].lower()))

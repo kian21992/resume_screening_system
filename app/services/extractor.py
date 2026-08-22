@@ -44,6 +44,13 @@ def _text_quality_score(text):
         flags=re.IGNORECASE,
     ))
     punctuation_spacing = len(re.findall(r'\s+[,.!?;:]', cleaned))
+    # A recognized heading at the very end has no section content beneath it.
+    # This commonly indicates that a coordinate-unaware PDF reader moved a
+    # two-column heading after the entries it labels. Treat that as a strong
+    # reading-order defect even when the candidate contains slightly more text.
+    trailing_orphaned_heading = int(bool(
+        lines and _SECTION_HEADING_RE.fullmatch(lines[-1])
+    ))
 
     return (
         min(len(words), 1200) * 0.035
@@ -56,6 +63,7 @@ def _text_quality_score(text):
         - flattened_chars * 0.035
         - concatenated_headings * 5
         - punctuation_spacing * 0.12
+        - trailing_orphaned_heading * 8
     )
 
 
