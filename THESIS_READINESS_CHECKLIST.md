@@ -11,9 +11,9 @@
 4. Open the Candidates page and confirm candidates are ranked by fit score.
 5. Open a candidate detail page and explain:
    - required skill match score: 50% weight
-   - work experience score: 30% weight
-   - education score: 20% weight
-   - text similarity score: reference metric only
+   - work experience score: 25% weight
+   - education score: 15% weight
+   - resume-to-job text similarity: 10% weight
 6. Delete one candidate and confirm the record is removed.
 
 ## Verification Commands
@@ -29,8 +29,16 @@ python app.py
 ## Minimum Defense Points
 
 - The system uses deterministic scoring so recommendations are explainable.
-- Skill matching uses exact word-boundary matching to reduce false positives.
-- Common technical aliases are supported, such as JS/JavaScript and NLP/Natural Language Processing.
+- Skill matching uses word-boundary matching, then alias, fuzzy and stemmed fallbacks.
+- Negated and aspirational wording is excluded, so "no experience with SQL" and a
+  "currently learning" section do not count as evidence of a skill.
+- Common technical aliases are supported, such as JS/JavaScript, NLP/Natural Language
+  Processing, and SQL for MySQL/PostgreSQL/MSSQL.
+- A skill can also be credited when the resume shows a technology that entails it
+  (REST API from Django or API Gateway); the inferring technology is recorded so a
+  reviewer can see the match was inferred rather than read.
+- Raw resume-to-job cosine is rescaled onto 0-100 before it is weighted, so the
+  10% component cannot cap the achievable fit score.
 - Uploaded files are renamed uniquely to prevent overwriting another candidate's resume.
 - New uploaded resumes are stored outside the public static folder.
 - Candidate deletion only removes files from approved upload folders.

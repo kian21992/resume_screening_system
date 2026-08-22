@@ -1494,7 +1494,7 @@ def extract_years_of_experience(text):
                 ('november', 'nov'), ('december', 'dec')
             ), start=1) for name in names
         }
-        token = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\d{4}|(?:19|20)\d{2}'
+        token = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s*\d{4}|(?:19|20)\d{2}'
         range_re = re.compile(rf'(?P<start>{token})\s*(?:-|–|—|to)\s*(?P<end>Present|Current|{token})', re.I)
 
         def ordinal(value, is_end=False):
@@ -1502,10 +1502,10 @@ def extract_years_of_experience(text):
             if value in {'present', 'current'}:
                 now = datetime.now()
                 return now.year * 12 + now.month - 1
-            named = re.match(r'([a-z]+)\s*(\d{4})', value)
+            named = re.match(r'([a-z]+)\.?\s*(\d{4})', value)
             if named:
                 return int(named.group(2)) * 12 + month_names[named.group(1)[:3]] - 1
-            year = int(value)
+            year = int(re.sub(r'\D', '', value))
             return year * 12
 
         intervals = []
@@ -1545,8 +1545,8 @@ def extract_years_of_experience(text):
         ('november', 'nov'), ('december', 'dec')
     ), start=1) for n in names}
     MTOK = (r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?'
-            r'|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?'
-            r'|Dec(?:ember)?)')
+            r'|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?'
+            r'|Dec(?:ember)?)\.?')
     DTOK = rf'(?:{MTOK}\s+\d{{4}}|(?:19|20)\d{{2}})'
     PROX_RANGE = re.compile(
         rf'(?P<s>{DTOK})\s*(?:-|\u2013|\u2014|to)\s*(?P<e>Present|Current|{DTOK})',
@@ -1729,8 +1729,8 @@ def extract_experience_records(text):
         next_line = scan_lines[line_index + 1].strip() if line_index + 1 < len(scan_lines) else ''
         if (
             re.search(r'(?i)\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
-                      r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|'
-                      r'Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},\s*$', current_line)
+                      r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|'
+                      r'Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2},\s*$', current_line)
             and re.fullmatch(r'(?:19|20)\d{2}', next_line)
         ):
             normalized_scan_lines.append(f'{current_line} {next_line}')
@@ -1748,14 +1748,14 @@ def extract_experience_records(text):
         re.IGNORECASE
     )
     MONTH_DATE_RANGE_RE = re.compile(
-        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}\s*(?:-|–|—|to)\s*(?:Present|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{4})\b',
+        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{4}\s*(?:-|–|—|to)\s*(?:Present|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{4}|\d{4})\b',
         re.IGNORECASE
     )
     MONTH_YEAR_ONLY_RE = re.compile(
-        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}\b',
+        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{4}\b',
         re.IGNORECASE
     )
-    MONTH_TOKEN = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+    MONTH_TOKEN = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?'
     MONTH_DATE_RANGE_RE = re.compile(
         rf'\b{MONTH_TOKEN}\s+\d{{2,4}}\s*(?:-|â€“|â€”|to)\s*(?:Present|Current|Till\s+date|{MONTH_TOKEN}\s+\d{{2,4}}|\d{{2,4}})\b',
         re.IGNORECASE
@@ -2889,4 +2889,33 @@ def extract_experience_records(text):
         if key not in seen:
             seen.add(key)
             unique_records.append(rec)
-    return unique_records[:25]
+    return _drop_absorbed_records(unique_records)[:25]
+
+
+def _drop_absorbed_records(records):
+    """Remove duplicate roles whose title absorbed the employer line.
+
+    Two of the block strategies can parse the same job differently: one yields
+    "Principal Consultant" at "Bundok Industries", the other yields the whole
+    header line "Bundok Industries Houston, TX - Principal Consultant" as the
+    title and then takes a duty fragment as the employer. Both survive the
+    key-based dedup because neither field matches. The absorbed variant is
+    identifiable: same duration, and its title ends with the clean title.
+    """
+    def norm(value):
+        return re.sub(r'[^a-z0-9]+', ' ', (value or '').lower()).strip()
+
+    drop = set()
+    for i, outer in enumerate(records):
+        for j, inner in enumerate(records):
+            if i == j or i in drop or j in drop:
+                continue
+            if round(outer.get('years') or 0, 2) != round(inner.get('years') or 0, 2):
+                continue
+            outer_title, inner_title = norm(outer.get('job_title')), norm(inner.get('job_title'))
+            if not outer_title or not inner_title or outer_title == inner_title:
+                continue
+            # The longer title has swallowed the employer and location.
+            if outer_title.endswith(inner_title) and len(outer_title) > len(inner_title):
+                drop.add(i)
+    return [rec for index, rec in enumerate(records) if index not in drop]

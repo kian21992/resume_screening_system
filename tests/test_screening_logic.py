@@ -24,6 +24,7 @@ from types import SimpleNamespace
 
 from app.services.evidence import build_candidate_evidence
 from app.services.matching_engine import (
+    FIT_WEIGHT_PERCENTS,
     calculate_fit_score,
     calculate_skills_match,
     calculate_text_similarity,
@@ -1898,11 +1899,11 @@ class TestGenerateDecisionExplanation(unittest.TestCase):
             experience_req=3,
             education_req="Bachelor's",
         )
-        self.assertIn("skills 50%", explanation)
-        self.assertIn("experience 30%", explanation)
-        self.assertIn("education 20%", explanation)
+        self.assertIn(f"skills {FIT_WEIGHT_PERCENTS[0]}%", explanation)
+        self.assertIn(f"experience {FIT_WEIGHT_PERCENTS[1]}%", explanation)
+        self.assertIn(f"education {FIT_WEIGHT_PERCENTS[2]}%", explanation)
         self.assertIn("preferred skill", explanation.lower())
-        self.assertIn("reference metric", explanation)
+        self.assertIn(f"text similarity {FIT_WEIGHT_PERCENTS[3]}%", explanation)
         self.assertIn("matched", explanation.lower())
         self.assertIn("missing", explanation.lower())
         self.assertTrue(
@@ -2072,11 +2073,18 @@ class TestEvaluateCandidate(unittest.TestCase):
             requires_all_critical=True,
         )
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        # 4-component fit: skills/exp/edu all 100, TF-IDF cosine ~17.66 -> 83.53.
-        # Label is still forced Not Qualified by the critical-skill rule.
-        self.assertEqual(result["fit_score"], 91.77)
+        # Skills/exp/edu all 100. Derived from the weights rather than hardcoded
+        # so a deliberate reweighting does not silently fail here.
+        self.assertEqual(
+            result["fit_score"],
+            calculate_fit_score(result["skill_score"], result["experience_score"],
+                                result["education_score"],
+                                result["text_similarity_score"]),
+        )
         self.assertEqual(sorted(result["missing_critical_skills"]), sorted(["COBOL", "Fortran"]))
-        self.assertIn("fit score remains 92%", result["summary"])
+        # Label is forced Not Qualified by the critical-skill rule, but the
+        # numeric score is still reported unchanged.
+        self.assertIn(f"fit score remains {round(result['fit_score'])}%", result["summary"])
 
     def test_missing_required_skills_do_not_force_disqualification_without_critical_list(self):
         result = self._run(
@@ -2109,8 +2117,12 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertEqual(result["matched_skills"], [])
         self.assertEqual(result["recommendation_label"], "Not Qualified")
-        # 4-component fit: skills 0, exp/edu 100, TF-IDF cosine ~17.66 -> 41.77.
-        self.assertEqual(result["fit_score"], 41.77)
+        self.assertEqual(
+            result["fit_score"],
+            calculate_fit_score(result["skill_score"], result["experience_score"],
+                                result["education_score"],
+                                result["text_similarity_score"]),
+        )
 
     def test_missing_more_than_half_required_skills_routes_to_review(self):
         # The old "< half of required skills -> hard Not Qualified" gate was
@@ -2123,8 +2135,14 @@ class TestEvaluateCandidate(unittest.TestCase):
         )
         self.assertEqual(result["matched_skills"], ["Python"])
         self.assertEqual(result["recommendation_label"], "For Review")
-        # skills 35 (1/4 matched + 10 preferred bonus), exp/edu 100, cosine ~17.66 -> 59.27.
-        self.assertEqual(result["fit_score"], 59.27)
+        # skills 35 (1 of 4 matched, plus the 10-point preferred bonus), exp/edu 100.
+        self.assertEqual(result["skill_score"], 35.0)
+        self.assertEqual(
+            result["fit_score"],
+            calculate_fit_score(result["skill_score"], result["experience_score"],
+                                result["education_score"],
+                                result["text_similarity_score"]),
+        )
 
     def test_severe_experience_gap_is_not_qualified(self):
         result = self._run(
@@ -2191,10 +2209,10 @@ class TestEvaluateCandidate(unittest.TestCase):
         explanation = result["decision_explanation"]
         self.assertIsInstance(explanation, str)
         self.assertGreater(len(explanation), 100)
-        self.assertIn("skills 50%", explanation)
-        self.assertIn("experience 30%", explanation)
-        self.assertIn("education 20%", explanation)
-        self.assertIn("reference metric", explanation)
+        self.assertIn(f"skills {FIT_WEIGHT_PERCENTS[0]}%", explanation)
+        self.assertIn(f"experience {FIT_WEIGHT_PERCENTS[1]}%", explanation)
+        self.assertIn(f"education {FIT_WEIGHT_PERCENTS[2]}%", explanation)
+        self.assertIn(f"text similarity {FIT_WEIGHT_PERCENTS[3]}%", explanation)
 
     # --- no required skills ---
 

@@ -1,12 +1,20 @@
+QUALIFIED_THRESHOLD = 75.0
+
+
 def generate_recommendation(fit_score, min_fit_score=50.0):
     """
     Generates a recommendation label based on the fit score.
     Logic:
-    - Qualified: >= 75%
-    - For Review: >= min_fit_score (e.g., 50%) but < 75%
+    - Qualified: >= 75%, and never below the recruiter's configured minimum
+    - For Review: >= min_fit_score but below the Qualified threshold
     - Not Qualified: < min_fit_score
+
+    A job may set a minimum above 75, so the Qualified bar is the higher of the
+    two. Checking the fixed 75 first would label a candidate Qualified while
+    scoring below the minimum the recruiter set for that job.
     """
-    if fit_score >= 75.0:
+    qualified_at = max(QUALIFIED_THRESHOLD, min_fit_score)
+    if fit_score >= qualified_at:
         return "Qualified"
     elif fit_score >= min_fit_score:
         return "For Review"
@@ -44,6 +52,15 @@ SKILL_ALIASES = {
     "machine learning": ["ml"],
     "artificial intelligence": ["ai"],
     "natural language processing": ["nlp"],
+    # Word-boundary matching cannot see "sql" inside MySQL/PostgreSQL/MSSQL, and
+    # the short-skill guard below disables the fuzzy and stemmed fallbacks for
+    # three-character skills, so a resume listing four SQL dialects reports SQL
+    # as missing without these.
+    "sql": ["mysql", "mssql", "ms sql", "sql server", "postgresql", "postgres",
+            "nosql", "t-sql", "tsql", "pl/sql", "plsql", "sqlite", "oracle sql"],
+    "rest api": ["rest apis", "restful", "restful api", "restful apis",
+                 "restful services", "rest framework", "rest endpoints",
+                 "rest service", "rest services"],
     "lesson planning": ["lesson plan", "lesson plans", "develop lesson plans", "developlessonplans", "curriculum planning", "prepared and delivered lessons", "designs engaging lesson plans"],
     "classroom management": ["classroommanagement", "classroom management strategies", "managed classroom instruction"],
     "communication skills": ["communication skill", "written and verbal communication", "verbal and written communication skills"],
@@ -139,6 +156,40 @@ RESUME_SKILL_CATALOG = {
     "Human Resources": ["hr management"],
 }
 
+# Skills that are entailed by other skills. Senior candidates list the specific
+# technology and leave the umbrella skill unsaid — nobody who ships Django or
+# API Gateway writes "REST API" on a resume, the same way nobody lists
+# "Microsoft Word". Matching the umbrella term literally therefore penalises
+# exactly the candidates who have most obviously done the work.
+#
+# An implied match is recorded separately from a direct one so the evidence
+# panel can say which technology it was inferred from, and a reviewer can
+# disagree. Entries must be genuine entailments, not loose associations.
+SKILL_IMPLICATIONS = {
+    "rest api": [
+        "django rest framework", "django", "flask", "fastapi", "express",
+        "spring boot", "asp.net web api", "api gateway", "graphql",
+        "microservices", "swagger", "openapi", "postman", "retrofit", "axios",
+        "web api", "json api", "grpc",
+    ],
+    "sql": [
+        "postgresql", "mysql", "mssql", "sql server", "oracle", "sqlite",
+        "t-sql", "pl/sql", "database design", "query optimization",
+        "query optimisation", "stored procedures", "dynamodb", "redshift",
+        "bigquery", "snowflake",
+    ],
+    "api development": ["rest api", "graphql", "grpc", "api gateway"],
+    "cloud computing": [
+        "aws", "amazon web services", "azure", "google cloud", "gcp",
+        "lambda", "s3", "ec2", "kubernetes",
+    ],
+    "version control": ["git", "github", "gitlab", "bitbucket", "svn"],
+    "ci/cd": ["jenkins", "github actions", "gitlab ci", "circleci", "travis"],
+    "containerization": ["docker", "kubernetes", "podman", "ecs"],
+    "agile": ["scrum", "kanban", "sprint planning"],
+    "microsoft office": ["microsoft word", "microsoft excel", "powerpoint", "outlook"],
+}
+
 _SKILL_SECTION_HEADER_RE = _re.compile(
     r"^\s*(?:technical\s+skills?|professional\s+skills?|personal\s+skills?"
     r"|key\s+skills?|relevant\s+skills?|special\s+skills?|skills?"
@@ -225,13 +276,41 @@ _COMPETENCY_PHRASE_RE = _re.compile(
     _re.IGNORECASE,
 )
 _NEGATED_SKILL_RE = _re.compile(
-    r"\b(?:no|not|without|lack(?:s|ing)?|unfamiliar\s+with)\b[^.;:]{0,35}$",
+    r"\b(?:no|not|without|lack(?:s|ing)?|unfamiliar\s+with)\b[^.;:]{0,60}$",
     _re.IGNORECASE,
 )
 _ASPIRATIONAL_SKILL_RE = _re.compile(
     r"\b(?:interested\s+in|willing\s+to|eager\s+to|hoping\s+to|seeking\s+to|"
-    r"would\s+like\s+to|currently\s+learning|planning\s+to\s+learn|"
-    r"want(?:s|ing)?\s+to\s+learn)\b[^.;:]{0,50}$",
+    r"would\s+like\s+to|currently\s+(?:learning|studying|exploring)|"
+    r"planning\s+to\s+learn|hope\s+to\s+learn|aspire\s+to|"
+    r"want(?:s|ing)?\s+to\s+learn)\b[^.;:]{0,60}$",
+    _re.IGNORECASE,
+)
+# Unanchored forms of the two patterns above. The anchored versions only test
+# the text immediately before a skill mention; these test whether a line
+# carries a disclaimer anywhere, which is what the paraphrase fallbacks need —
+# a line that says "no professional experience with SQL" must not be able to
+# supply SQL by fuzzy or stemmed match either.
+_NEGATION_CUE_RE = _re.compile(
+    r"\b(?:no|not|without|lack(?:s|ing)?|unfamiliar\s+with)\b",
+    _re.IGNORECASE,
+)
+_ASPIRATION_CUE_RE = _re.compile(
+    r"\b(?:interested\s+in|willing\s+to|eager\s+to|hoping\s+to|seeking\s+to|"
+    r"would\s+like\s+to|currently\s+(?:learning|studying|exploring)|"
+    r"planning\s+to\s+learn|hope\s+to\s+learn|aspire\s+to|"
+    r"want(?:s|ing)?\s+to\s+learn)\b",
+    _re.IGNORECASE,
+)
+# A whole section can be aspirational ("Technologies I am currently learning").
+# The line-local patterns above only see the same line as the skill mention, so
+# a heading followed by a bare skill list needs its own rule.
+_ASPIRATIONAL_SECTION_RE = _re.compile(
+    r"^\s*(?:technolog(?:y|ies)|skills?|tools?|languages?|frameworks?|stack)?\s*"
+    r"(?:i\s+am\s+|i'm\s+|currently\s+|now\s+)*"
+    r"(?:learning|studying|exploring|teaching\s+myself|self[-\s]?studying|"
+    r"want(?:ing)?\s+to\s+learn|hoping\s+to\s+learn|familiariz(?:ing|ation))"
+    r"[^\n]{0,40}$",
     _re.IGNORECASE,
 )
 _CONTEXT_EXCLUDED_HEADER_RE = _re.compile(
@@ -864,33 +943,115 @@ def _pick_phrase(options, seed, offset=0):
     index = (int(digest[:8], 16) + offset) % len(options)
     return options[index]
 
-def analyze_skills(resume_skills_text, required_skills_list):
+def claimed_skill_text(resume_text):
+    """Drop resume regions that describe skills the candidate does not have.
+
+    Sections headed "Technologies I am currently learning" and similar list
+    real skill names the candidate is explicitly not claiming yet. A section is
+    dropped until the next heading-like line.
+    """
+    kept = []
+    skipping = False
+    for raw_line in (resume_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            kept.append(raw_line)
+            continue
+        if _ASPIRATIONAL_SECTION_RE.match(line):
+            skipping = True
+            continue
+        if skipping:
+            # A new section heading ends the aspirational block. Headings are
+            # short and carry no sentence punctuation.
+            looks_like_heading = (
+                len(line) <= 60
+                and not line.endswith((".", ",", ";"))
+                and (line.isupper() or _SKILL_SECTION_HEADER_RE.match(line)
+                     or _CONTEXT_INCLUDED_HEADER_RE.match(line)
+                     or _CONTEXT_EXCLUDED_HEADER_RE.match(line))
+            )
+            if not looks_like_heading:
+                continue
+            skipping = False
+        kept.append(raw_line)
+    return "\n".join(kept)
+
+
+def _skill_claimed(resume_text, skill):
+    """True when the resume claims ``skill`` rather than disclaiming it.
+
+    Runs the same literal / alias / fuzzy / stemmed cascade as before, but per
+    line and only where the wording around the mention is not a negation
+    ("no experience with SQL") or an aspiration ("eager to learn Python").
+    """
+    variants = _skill_variants(skill)
+    for line in resume_text.splitlines():
+        line_lower = line.lower()
+        if not line_lower.strip():
+            continue
+        for variant in sorted(variants, key=len, reverse=True):
+            for match in _variant_matches(line_lower, variant):
+                prefix = line_lower[:match.start()]
+                if (not _NEGATED_SKILL_RE.search(prefix)
+                        and not _ASPIRATIONAL_SKILL_RE.search(prefix)):
+                    return True
+    # Fuzzy and stemmed fallbacks run per line so the same negation guard
+    # applies; a line that disclaims a skill cannot supply it by paraphrase.
+    for line in resume_text.splitlines():
+        line_lower = line.lower()
+        if not line_lower.strip():
+            continue
+        if _NEGATION_CUE_RE.search(line_lower) or _ASPIRATION_CUE_RE.search(line_lower):
+            continue
+        if _fuzzy_skill_found(line_lower, skill) or _stemmed_skill_found(line_lower, skill):
+            return True
+    return False
+
+
+def _implied_by(resume_text, skill):
+    """Return the technology that entails ``skill``, or None."""
+    for implier in SKILL_IMPLICATIONS.get(skill.strip().lower(), []):
+        if _skill_claimed(resume_text, implier):
+            return implier
+    return None
+
+
+def analyze_skills(resume_skills_text, required_skills_list, with_evidence=False):
     """
     Identifies matched and missing skills using word-boundary regex so that
     short skills like 'R', 'C', 'Go' are not falsely matched inside longer words
     (e.g. 'R' should not match 'recruiter', 'Go' should not match 'algorithm').
+
+    A mention only counts when the resume claims the skill. Negated and
+    aspirational wording is excluded, so "no experience with SQL" and "eager to
+    learn Python" no longer score as matches.
+
+    A skill the resume never names can still be credited when the resume shows
+    a technology that entails it — see ``SKILL_IMPLICATIONS``. Pass
+    ``with_evidence`` to also receive {skill: implying technology} so the
+    reviewer is told the match was inferred rather than read.
     """
     matched = []
     missing = []
-    resume_text_lower = resume_skills_text.lower()
+    implied = {}
+    evidence_text = claimed_skill_text(resume_skills_text)
 
     for req_skill in required_skills_list:
         skill = req_skill.strip()
         if not skill:
             continue
-        found = any(_literal_skill_found(resume_text_lower, variant) for variant in _skill_variants(skill))
-        if not found:
-            # Fall back to fuzzy matching so wording variations still match.
-            found = _fuzzy_skill_found(resume_text_lower, skill)
-        if not found:
-            # Final fallback: stemmed-token match for inflected paraphrases.
-            found = _stemmed_skill_found(resume_text_lower, skill)
-
-        if found:
+        if _skill_claimed(evidence_text, skill):
             matched.append(skill)
+            continue
+        implier = _implied_by(evidence_text, skill)
+        if implier:
+            matched.append(skill)
+            implied[skill] = implier
         else:
             missing.append(skill)
 
+    if with_evidence:
+        return matched, missing, implied
     return matched, missing
 
 
@@ -904,19 +1065,14 @@ def analyze_preferred_skills(resume_skills_text, preferred_skills_list):
     if not preferred_skills_list:
         return [], 0, 0.0
 
-    resume_text_lower = resume_skills_text.lower()
+    evidence_text = claimed_skill_text(resume_skills_text)
     matched_preferred = []
 
     for pref_skill in preferred_skills_list:
         skill = pref_skill.strip()
         if not skill:
             continue
-        found = any(_literal_skill_found(resume_text_lower, variant) for variant in _skill_variants(skill))
-        if not found:
-            found = _fuzzy_skill_found(resume_text_lower, skill)
-        if not found:
-            found = _stemmed_skill_found(resume_text_lower, skill)
-        if found:
+        if _skill_claimed(evidence_text, skill):
             matched_preferred.append(skill)
 
     total_preferred = len([s for s in preferred_skills_list if s.strip()])
@@ -963,6 +1119,132 @@ def get_degree_rank(degree_str):
     if _matches([r'\bhigh\s+school', r'\bdiploma\b', r'\bged\b']):
         return 1
     return 0
+
+
+# Field families used to check whether a degree is in the subject the job asks
+# for. Level alone cannot do this: a BA in Music and a BS in Computer Science
+# are both rank 3, so a level-only comparison scores them identically against a
+# Computer Science requirement.
+DEGREE_FIELD_GROUPS = {
+    "computing": (
+        "computer science", "computer studies", "computing", "information technology",
+        "information system", "information science", "software engineering",
+        "computer engineering", "data science", "informatics", "cybersecurity",
+        "bscs", "bsit", "bsis", "bscoe", "information sciences",
+    ),
+    "engineering": (
+        "engineering", "electronics", "mechanical", "civil", "electrical",
+        "industrial engineering", "bsece", "bsie", "bsce",
+    ),
+    "education": (
+        "education", "elementary education", "secondary education", "teaching",
+        "pedagogy", "bsed", "beed", "maed",
+    ),
+    "business": (
+        "business", "accountancy", "accounting", "management", "finance",
+        "marketing", "economics", "commerce", "administration", "bsba", "bsa", "mba",
+    ),
+    "health": (
+        "nursing", "medicine", "pharmacy", "medical", "midwifery", "public health",
+        "biology", "bsn",
+    ),
+    "arts": (
+        "music", "fine arts", "film", "literature", "english", "communication",
+        "journalism", "psychology", "philosophy", "history", "political science",
+        "humanities", "theater", "design",
+    ),
+}
+
+
+def _degree_field(degree_text):
+    """Return the field family for a degree string, or None when unclear."""
+    if not degree_text:
+        return None
+    lowered = degree_text.lower()
+    best = None
+    best_len = 0
+    for group, keywords in DEGREE_FIELD_GROUPS.items():
+        for keyword in keywords:
+            if keyword in lowered and len(keyword) > best_len:
+                best, best_len = group, len(keyword)
+    return best
+
+
+def degree_field_relevance(candidate_degree, education_req):
+    """Multiplier applied to the education score for subject relevance.
+
+    1.0  same field family, or the requirement names no field
+    0.85 candidate's field could not be identified — do not punish a parse miss
+    0.5  clearly a different field family
+    """
+    required_field = _degree_field(education_req)
+    if not required_field:
+        return 1.0
+    candidate_field = _degree_field(candidate_degree)
+    if candidate_field is None:
+        return 0.85
+    return 1.0 if candidate_field == required_field else 0.5
+
+
+_EXPERIENCE_HEADER_RE = _re.compile(
+    r"^\s*(?:work\s+experience|professional\s+experience|teaching\s+experience"
+    r"|employment(?:\s+history)?|work\s+history|career\s+history|experience"
+    r"|relevant\s+experience|projects?)\s*:?\s*$",
+    _re.IGNORECASE,
+)
+
+
+def _experience_section_text(resume_text):
+    """Return the lines under work-experience headings, or '' if none found."""
+    kept = []
+    inside = False
+    for raw_line in (resume_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _EXPERIENCE_HEADER_RE.match(line):
+            inside = True
+            continue
+        if inside and (_SKILL_SECTION_HEADER_RE.match(line)
+                       or _CONTEXT_EXCLUDED_HEADER_RE.match(line)):
+            inside = False
+            continue
+        if inside:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def experience_relevance(resume_text, job_title, job_skills):
+    """Multiplier applied to the experience score for role relevance.
+
+    Years alone cannot tell whether the work relates to the role: three years
+    behind a till scores the same as three years of backend engineering. Looks
+    for any of the job's skills or title words inside the resume's experience
+    section.
+
+    1.0  the experience section references the job's skills or role
+    0.4  no overlap at all
+    """
+    section = _experience_section_text(resume_text)
+    if not section.strip():
+        # No identifiable experience section: fall back to the whole resume
+        # rather than penalising an unusual layout.
+        section = resume_text or ""
+
+    evidence = claimed_skill_text(section)
+    for skill in job_skills or []:
+        if skill and _skill_claimed(evidence, skill):
+            return 1.0
+
+    title_words = {
+        word for word in _re.findall(r"[a-z]{4,}", (job_title or "").lower())
+        if word not in {"senior", "junior", "lead", "staff", "principal", "the", "and"}
+    }
+    section_words = set(_re.findall(r"[a-z]{4,}", evidence.lower()))
+    if title_words & section_words:
+        return 1.0
+    return 0.4
+
 
 def _degree_label(rank):
     """Returns a human-readable degree label from a rank integer."""
@@ -1290,15 +1572,15 @@ def generate_decision_explanation(job_title, recommendation_label, fit_score,
         "No preferred-skill bonus was applied."
     )
     similarity_text = (
-        f"Text similarity: {text_similarity_score:.0f}% reference metric only."
+        f"Text similarity: {text_similarity_score:.0f}% (10% of the fit score)."
         if text_similarity_score is not None else
         "Text similarity was not available and did not affect the decision."
     )
     scoring_text = (
         _pick_phrase([
-            "Scoring: skills 50%, experience 30%, education 20%.",
-            "Score basis: skills 50%, experience 30%, education 20%.",
-            "Fit score weights: skills 50%, experience 30%, education 20%.",
+            "Scoring: skills 50%, experience 25%, education 15%, text similarity 10%.",
+            "Score basis: skills 50%, experience 25%, education 15%, text similarity 10%.",
+            "Fit score weights: skills 50%, experience 25%, education 15%, text similarity 10%.",
         ], seed, 5)
         + f" {requirements_text} {preferred_text} {similarity_text}"
     )
@@ -1519,7 +1801,9 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         clean_text, extract_contact_info, extract_education, 
         extract_years_of_experience, extract_experience_records, extract_certifications
     )
-    from .matching_engine import calculate_fit_score, calculate_text_similarity
+    from .matching_engine import (
+        FIT_WEIGHTS, calculate_fit_score, calculate_text_similarity
+    )
     
     # 1. Clean Texts
     cleaned_resume = clean_text(resume_text)
@@ -1527,10 +1811,13 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
 
     # 2. Required skill matching — run against original resume text (not cleaned) so that
     #    versioned skills like 'CSS3', 'ES6', 'HTML5', 'Python 3' are not stripped of digits.
-    matched_skills, missing_skills = analyze_skills(resume_text, required_skills)
-    matched_critical_skills, missing_critical_skills = analyze_skills(
-        resume_text, critical_skills or []
+    matched_skills, missing_skills, implied_skills = analyze_skills(
+        resume_text, required_skills, with_evidence=True
     )
+    matched_critical_skills, missing_critical_skills, implied_critical = analyze_skills(
+        resume_text, critical_skills or [], with_evidence=True
+    )
+    implied_skills = {**implied_critical, **implied_skills}
 
     # 2b. Preferred skill bonus — also uses original text for the same reason
     matched_preferred, total_preferred, preferred_bonus = analyze_preferred_skills(
@@ -1555,39 +1842,55 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         required_skill_score = 100.0
     skill_score = min(required_skill_score + preferred_bonus, 100.0)
 
-    # 5. Experience Score with soft ceiling — extra years beyond 2× the requirement
-    #    give diminishing returns rather than capping hard at 100%
+    # 5. Experience Score. Years are capped at the requirement, then scaled by
+    #    how far the experience section relates to this role, so unrelated work
+    #    history does not score the same as relevant work history.
     if not experience_req or experience_req <= 0:
         exp_score = 100.0
     else:
         raw_ratio = total_exp_years / experience_req
-        if raw_ratio >= 1.0:
-            # Met requirement — scale from 100% up, but cap at 100
-            exp_score = 100.0
-        else:
-            # Partial credit; scale linearly up to 100%
-            exp_score = round(raw_ratio * 100.0, 2)
+        exp_score = 100.0 if raw_ratio >= 1.0 else round(raw_ratio * 100.0, 2)
 
-    # 6. Education Score
+    # Kept separate from exp_score: the "far below the requirement" rule below
+    # is about not having enough years. Letting a relevance discount push a
+    # fully-time-served candidate under that bar would disqualify them for the
+    # wrong reason, and report the wrong reason to the reviewer.
+    exp_score_by_years = exp_score
+    exp_relevance = experience_relevance(
+        resume_text,
+        job_title,
+        [*(critical_skills or []), *(required_skills or []), *(preferred_skills or [])],
+    )
+    exp_score = round(exp_score * exp_relevance, 2)
+
+    # 6. Education Score — level, then scaled by subject relevance.
     cand_rank = 0
+    candidate_degree = ''
     if extracted_edu:
-        cand_rank = max(get_degree_rank(e['degree']) for e in extracted_edu)
+        best = max(extracted_edu, key=lambda e: get_degree_rank(e['degree']))
+        cand_rank = get_degree_rank(best['degree'])
+        candidate_degree = ' '.join(
+            e.get('degree') or '' for e in extracted_edu
+        )
     else:
         # Fallback: scan raw text directly
         cand_rank = get_degree_rank(resume_text)
+        candidate_degree = resume_text
 
     job_rank = get_degree_rank(education_req)
     if job_rank <= 0:
         edu_score = 100.0
+        edu_relevance = 1.0
     else:
         edu_score = min((cand_rank / job_rank) * 100.0, 100.0)
+        edu_relevance = degree_field_relevance(candidate_degree, education_req)
+        edu_score = round(edu_score * edu_relevance, 2)
 
-    # 7. Final Weighted Fit Score (4-component model:
-    #    Skills 50%, Experience 25%, Education 15%, TF-IDF cosine similarity 10%).
-    #    Cosine is weighted modestly because raw resume-vs-job cosine is
-    #    structurally low; a higher weight would cap strong candidates' scores.
+    # 7. Final Weighted Fit Score: Skills 50%, Experience 25%, Education 15%,
+    #    resume-to-job text similarity 10%.
     text_similarity_score = calculate_text_similarity(cleaned_resume, cleaned_job)
-    fit_score = calculate_fit_score(skill_score, exp_score, edu_score, text_similarity_score)
+    fit_score = calculate_fit_score(skill_score, exp_score, edu_score,
+                                    text_similarity_score)
     
     # 9. Recommendation & Critical Skill Enforcement
     label = generate_recommendation(fit_score, min_fit_score)
@@ -1602,10 +1905,18 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
     elif required_skills and len(matched_skills) == 0:
         label = "Not Qualified"
         disqualification_reason = "none of the configured required skills were found in the resume"
-    elif experience_req and experience_req > 0 and exp_score < 50.0:
+    elif required_skills and missing_skills and label == "Qualified":
+        # Experience and education together carry 50 points, so a candidate can
+        # reach 75 while missing half the required skills. "Required" has to
+        # mean required: an incomplete skill set goes to a human instead.
+        label = "For Review"
+        disqualification_reason = (
+            "required skill(s) not evidenced in the resume: " + ', '.join(missing_skills)
+        )
+    elif experience_req and experience_req > 0 and exp_score_by_years < 50.0:
         label = "Not Qualified"
         disqualification_reason = "the detected work experience is far below the configured minimum requirement"
-    elif experience_req and experience_req > 0 and exp_score < 100.0 and label == "Qualified":
+    elif experience_req and experience_req > 0 and exp_score_by_years < 100.0 and label == "Qualified":
         label = "For Review"
 
     # 9. Generate Unique Candidate-Specific Narrative
@@ -1677,6 +1988,9 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         "confidence_reason": confidence_reason,
         "matched_skills": matched_skills,
         "missing_skills": missing_skills,
+        # {skill: technology it was inferred from} — matches the reviewer should
+        # be able to see were inferred rather than read off the resume.
+        "implied_skills": implied_skills,
         "matched_critical_skills": matched_critical_skills,
         "missing_critical_skills": missing_critical_skills,
         "matched_preferred": matched_preferred,
@@ -1692,13 +2006,17 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         # sub-score, its weight, and how many points it contributed to the
         # final fit score. The weakest contributor is the bottleneck to fix.
         "score_breakdown": {
-            "weights": {"skills": 0.50, "experience": 0.25,
-                        "education": 0.15, "text_similarity": 0.10},
+            "weights": {"skills": FIT_WEIGHTS[0], "experience": FIT_WEIGHTS[1],
+                        "education": FIT_WEIGHTS[2], "text_similarity": FIT_WEIGHTS[3]},
             "contributions": {
-                "skills": round(skill_score * 0.50, 2),
-                "experience": round(exp_score * 0.25, 2),
-                "education": round(edu_score * 0.15, 2),
-                "text_similarity": round(text_similarity_score * 0.10, 2),
+                "skills": round(skill_score * FIT_WEIGHTS[0], 2),
+                "experience": round(exp_score * FIT_WEIGHTS[1], 2),
+                "education": round(edu_score * FIT_WEIGHTS[2], 2),
+                "text_similarity": round(text_similarity_score * FIT_WEIGHTS[3], 2),
+            },
+            "relevance_factors": {
+                "experience": exp_relevance,
+                "education": edu_relevance,
             },
             "fit_score": round(fit_score, 2),
         }
