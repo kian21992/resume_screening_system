@@ -9,6 +9,7 @@ from app.models import (
     ExtractedEducation, ExtractedExperience, ExtractedCertification
 )
 from app.utils.files import safe_delete_uploaded_file
+from app.utils.authorization import roles_required
 
 job_bp = Blueprint('job', __name__)
 
@@ -23,6 +24,7 @@ def list_jobs():
 
 @job_bp.route('/jobs/create', methods=['GET', 'POST'])
 @login_required
+@roles_required('manager', 'admin')
 def create_job():
     if request.method == 'POST':
         title = request.form.get('title')
@@ -68,6 +70,7 @@ def create_job():
 
 @job_bp.route('/jobs/<int:job_id>/edit', methods=['GET', 'POST'])
 @login_required
+@roles_required('manager', 'admin')
 def edit_job(job_id):
     job = JobDescription.query.get_or_404(job_id)
     criteria = ScreeningCriteria.query.filter_by(job_id=job.id).first()
@@ -119,6 +122,7 @@ def view_job(job_id):
 
 @job_bp.route('/jobs/<int:job_id>/delete', methods=['POST'])
 @login_required
+@roles_required('admin')
 def delete_job(job_id):
     job = JobDescription.query.get_or_404(job_id)
     

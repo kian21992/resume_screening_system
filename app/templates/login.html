@@ -12,6 +12,7 @@
                     <p class="text-muted small">Automated Resume Screening System</p>
                 </div>
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label for="username" class="form-label">Username</label>
                         <input type="text" class="form-control" id="username" name="username" placeholder="Username" required>
@@ -22,12 +23,6 @@
                     </div>
                     <button type="submit" class="btn btn-primary w-100 py-2.5 fs-6">Sign In</button>
                 </form>
-                <div class="text-center mt-4 p-3 rounded-3" style="background: #f8fafc; border: 1px solid #d8dee6;">
-                    <small class="text-muted">For testing, use credentials below:</small>
-                    <div class="small text-light mt-1">
-                        User: <strong>hr_admin</strong> &nbsp; | &nbsp; Pass: <strong>password123</strong>
-                    </div>
-                </div>
             </div>
         </div>
     </div>

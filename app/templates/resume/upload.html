@@ -9,6 +9,7 @@
                 <h2 class="text-center mb-5 border-bottom border-secondary pb-3 fw-bold"><i class="bi bi-file-earmark-arrow-up text-primary me-2"></i>Submit Candidate Resumes</h2>
                 
                 <form method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-4">
                         <label for="job_id" class="form-label">Target Job Position <span class="text-danger">*</span></label>
                         <select class="form-select" id="job_id" name="job_id" required>

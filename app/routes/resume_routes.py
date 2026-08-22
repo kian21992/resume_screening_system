@@ -19,6 +19,7 @@ from app.utils.files import (
     safe_delete_uploaded_file,
     unique_upload_filename,
 )
+from app.utils.authorization import roles_required
 
 resume_bp = Blueprint('resume', __name__)
 
@@ -323,6 +324,7 @@ def process_resume_file(file, job):
 
 @resume_bp.route('/resume/upload', methods=['GET', 'POST'])
 @login_required
+@roles_required('hr', 'manager', 'admin')
 def upload():
     jobs = JobDescription.query.all()
     

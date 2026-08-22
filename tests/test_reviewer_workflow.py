@@ -25,6 +25,8 @@ class ReviewerTestConfig:
     SQLALCHEMY_DATABASE_URI = "sqlite://"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     UPLOAD_FOLDER = tempfile.gettempdir()
+    WTF_CSRF_ENABLED = False
+    RATELIMIT_ENABLED = False
 
 
 class TestReviewerWorkflow(unittest.TestCase):

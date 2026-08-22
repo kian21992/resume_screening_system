@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, current_user, logout_user, login_required
-from app import db, bcrypt
+from app import bcrypt, limiter
 from app.models import User
 
 auth_bp = Blueprint('auth', __name__)
@@ -9,6 +9,7 @@ def is_safe_next_url(target):
     return bool(target) and target.startswith('/') and not target.startswith('//')
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
+@limiter.limit('5 per minute', methods=['POST'])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard.dashboard'))
@@ -27,7 +28,8 @@ def login():
             
     return render_template('login.html')
 
-@auth_bp.route('/logout')
+@auth_bp.route('/logout', methods=['POST'])
+@login_required
 def logout():
     logout_user()
     return redirect(url_for('auth.login'))

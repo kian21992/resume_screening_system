@@ -185,6 +185,7 @@
                 </div>
 
                 <form method="POST" action="{{ url_for('screening.update_review', result_id=result.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label for="reviewer_status" class="form-label text-light small fw-semibold">Reviewer Decision</label>
                         <select class="form-select" id="reviewer_status" name="reviewer_status" required>

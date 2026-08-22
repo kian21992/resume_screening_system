@@ -12,6 +12,7 @@ from app.models import (
 from app.services.evidence import build_candidate_evidence
 from app.services.recommender import analyze_preferred_skills, extract_resume_skills
 from app.utils.files import safe_delete_uploaded_file
+from app.utils.authorization import roles_required
 
 screening_bp = Blueprint('screening', __name__)
 
@@ -159,6 +160,7 @@ def result_detail(result_id):
 
 @screening_bp.route('/screening_results/<int:result_id>/review', methods=['POST'])
 @login_required
+@roles_required('hr', 'manager', 'admin')
 def update_review(result_id):
     result = ScreeningResult.query.get_or_404(result_id)
     reviewer_status = (request.form.get('reviewer_status') or '').strip()
@@ -192,6 +194,7 @@ def update_review(result_id):
 
 @screening_bp.route('/screening_results/<int:result_id>/delete', methods=['POST'])
 @login_required
+@roles_required('admin')
 def delete_candidate(result_id):
     result = ScreeningResult.query.get_or_404(result_id)
     job_id = result.job_id
@@ -241,6 +244,7 @@ def delete_candidate(result_id):
 
 @screening_bp.route('/screening_results/delete_all', methods=['POST'])
 @login_required
+@roles_required('admin')
 def delete_all_candidates():
     job_id = request.args.get('job_id', type=int)
     reviewer_status = (request.args.get('reviewer_status') or '').strip()

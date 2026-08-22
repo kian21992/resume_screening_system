@@ -53,8 +53,9 @@
 
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <span class="text-muted small">Showing {{ results|length }} candidate{% if results|length != 1 %}s{% endif %}.</span>
-    {% if results %}
+    {% if results and current_user.role == 'admin' %}
     <form method="POST" action="{{ url_for('screening.delete_all_candidates', job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" onsubmit="return confirm('Remove all {{ results|length }} candidates in the current filter? This cannot be undone.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Remove filtered candidates</button>
     </form>
     {% endif %}
@@ -91,9 +92,10 @@
                     <td class="text-end">
                         <div class="table-actions">
                             <a href="{{ detail_url }}" class="btn btn-sm btn-outline-secondary">Review</a>
-                            <form action="{{ url_for('screening.delete_candidate', result_id=res.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" method="POST" onsubmit="return confirm('Remove {{ res.applicant.name }}? This cannot be undone.');">
+                            {% if current_user.role == 'admin' %}<form action="{{ url_for('screening.delete_candidate', result_id=res.id, job_id=selected_job_id, reviewer_status=selected_reviewer_status or None) }}" method="POST" onsubmit="return confirm('Remove {{ res.applicant.name }}? This cannot be undone.');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn btn-sm btn-outline-danger btn-icon" aria-label="Remove {{ res.applicant.name }}"><i class="bi bi-trash"></i></button>
-                            </form>
+                            </form>{% endif %}
                         </div>
                     </td>
                 </tr>

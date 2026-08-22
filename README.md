@@ -37,6 +37,13 @@ python -m nltk.downloader punkt stopwords
 copy .env.example .env
 ```
 
+Replace `SECRET_KEY` with a random value of at least 32 characters. You can
+generate one with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
 6. Initialize the database with sample users and jobs:
 
 ```bash
@@ -70,6 +77,41 @@ Username: it_manager
 Password: password123
 Role: Manager
 ```
+
+These are local demonstration credentials. Change them before deploying the
+application and never use the sample passwords on a public server.
+
+## Roles and permissions
+
+| Action | HR | Manager | Admin |
+| --- | --- | --- | --- |
+| View jobs and candidates | Yes | Yes | Yes |
+| Upload resumes and review candidates | Yes | Yes | Yes |
+| Create or edit jobs | No | Yes | Yes |
+| Delete jobs or candidates | No | No | Yes |
+
+The initializer does not create an admin account. Assign the admin role to an
+existing trusted user with:
+
+```bash
+python -m flask --app app set-user-role it_manager admin
+```
+
+Role restrictions are enforced by the server; the matching controls are also
+hidden from users who do not have permission.
+
+## Deployment security
+
+Set `APP_ENV=production` when deploying. In production the application refuses
+to start unless `SECRET_KEY` contains at least 32 characters, and session
+cookies are marked secure for HTTPS. Login attempts are limited to five per
+minute per client IP, and every state-changing form requires a CSRF token.
+
+The default `memory://` rate-limit storage is intended for local or single-process
+use. Configure `RATELIMIT_STORAGE_URI` with a shared backend such as Redis when
+the deployment runs multiple workers. If the application is behind a reverse
+proxy, configure trusted proxy handling at the hosting layer so the application
+receives the correct client address.
 
 ## Notes
 

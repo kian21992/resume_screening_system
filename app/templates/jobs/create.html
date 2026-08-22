@@ -12,6 +12,7 @@
         <div class="glass-panel p-4 shadow-sm">
             <div class="card-body">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <h4 class="mb-4 fw-bold text-white border-bottom border-secondary pb-2"><i class="bi bi-info-circle text-primary me-2"></i>Basic Information</h4>
                     <div class="mb-3">
                         <label for="title" class="form-label">Job Title <span class="text-danger">*</span></label>
