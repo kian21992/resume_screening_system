@@ -19,7 +19,8 @@ stop_words = set(stopwords.words('english'))
 EMAIL_RE = re.compile(r'(?<![\w.-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])')
 PHONE_RE = re.compile(
     r'(?<!\d)(?:'
-    r'(?:\+?63|0)[- .]?9\d{2}(?:[- .]?\d){7}'
+    r'\+\d{1,3}(?:[- .]?\d){7,12}'
+    r'|(?:\+?63|0)[- .]?9\d{2}(?:[- .]?\d){7}'
     r'|'
     r'(?:\+?63|0)[- .]?(?:9\d{2}|2)[- .]?\d{3}[- .]?\d{4}'
     r'|(?:\+?\d{1,3}[- .]?)?\(?\d{2,4}\)?[- .]?\d{3}[- .]?\d{4}'
@@ -247,11 +248,96 @@ def extract_certifications(text):
 
     # Seminars/trainings are credentials too. Support year-first columns and
     # uppercase seminar-title lists while excluding venues and facilitators.
-    training_heading = next((
-        index for index, line in enumerate(lines)
-        if classify_section_heading(line) == 'training'
-    ), None)
+    training_heading = None
+    preceding_section = 'header'
+    full_date_after_title = re.compile(
+        r'(?i)^(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+        r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|'
+        r'Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:,)?\s+(?:19|20)\d{2}$'
+    )
+    for index, line in enumerate(lines):
+        section = classify_section_heading(line)
+        wrapped_credential_word = bool(
+            section == 'training'
+            and preceding_section == 'certifications'
+            and index + 1 < len(lines)
+            and full_date_after_title.fullmatch(lines[index + 1].strip(' ()'))
+        )
+        if section == 'training' and not wrapped_credential_word:
+            training_heading = index
+            break
+        if section and not wrapped_credential_word:
+            preceding_section = section
     if training_heading is not None:
+        training_date_re = re.compile(
+            r'(?i)^(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+            r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|'
+            r'Nov(?:ember)?|Dec(?:ember)?)\.?\s+'
+            r'\d{1,2}(?:st|nd|rd|th)?(?:\s*[-–—]\s*\d{1,2}(?:st|nd|rd|th)?)?'
+            r',?\s+(?:19|20)\d{2}|(?:19|20)\d{2})'
+            r'(?:\s+inclusive\b.*)?$'
+        )
+        venue_re = re.compile(
+            r'(?i)\b(?:school|university|college|academy|institute|center|centre|'
+            r'hotel|auditorium|atrium|division|department|office|city hall)\b'
+        )
+
+        def is_training_venue(value):
+            return bool(
+                venue_re.search(value or '')
+                and not re.search(
+                    r'(?i)\b(?:training|seminar|workshop|forum|symposium|program)\b',
+                    value or '',
+                )
+            )
+
+        training_consumed = set()
+        section_end = len(lines)
+        for position in range(training_heading + 1, len(lines)):
+            next_section = classify_section_heading(lines[position])
+            if next_section and next_section != 'training':
+                section_end = position
+                break
+
+        # Recover complete, possibly wrapped titles by walking backward from
+        # each date. A venue is metadata, not part of the seminar name.
+        for date_index in range(training_heading + 1, section_end):
+            date_match = training_date_re.fullmatch(lines[date_index].strip(' ()'))
+            if not date_match:
+                continue
+            cursor = date_index - 1
+            issuer = None
+            if cursor > training_heading and is_training_venue(lines[cursor]):
+                issuer = lines[cursor]
+                training_consumed.add(cursor)
+                cursor -= 1
+            title_parts = []
+            title_indexes = []
+            while cursor > training_heading and len(title_parts) < 4:
+                candidate = lines[cursor]
+                if (
+                    training_date_re.fullmatch(candidate.strip(' ()'))
+                    or classify_section_heading(candidate)
+                    or is_training_venue(candidate)
+                ):
+                    break
+                title_parts.insert(0, candidate)
+                title_indexes.append(cursor)
+                cursor -= 1
+                if re.match(r'^(?:19|20)\d{2}\s+\D', candidate):
+                    break
+            if title_parts:
+                add(
+                    ' '.join(title_parts),
+                    'Training',
+                    date_match.group(0),
+                    issuer,
+                )
+                training_consumed.update(title_indexes)
+                training_consumed.add(date_index)
+                if date_index + 1 < section_end and is_training_venue(lines[date_index + 1]):
+                    training_consumed.add(date_index + 1)
+
         index = training_heading + 1
         while index < len(lines):
             line = lines[index]
@@ -263,6 +349,9 @@ def extract_certifications(text):
             section = classify_section_heading(line)
             if section and section != 'training':
                 break
+            if index in training_consumed:
+                index += 1
+                continue
             year_entry = re.match(
                 r'^(?P<year>(?:19|20)\d{2})\s+(?:(?:Participant|Paticipant),?\s*)?(?P<title>.+)$',
                 line,
@@ -274,6 +363,7 @@ def extract_certifications(text):
                 while lookahead < len(lines):
                     continuation = lines[lookahead]
                     if (re.match(r'^(?:19|20)\d{2}\s+', continuation)
+                            or training_date_re.fullmatch(continuation.strip(' ()'))
                             or classify_section_heading(continuation)):
                         break
                     if re.search(r'(?i)\bpage\s+\d+\b', continuation):
@@ -890,7 +980,9 @@ def extract_education(text):
     # ------------------------------------------------------------------
     EDU_SECTION_HEADERS = re.compile(
         r'^\s*(?:education(?:al)?(?:\s+(?:background|history|qualification|details))?'
+        r'|education(?:al)?\s+attainment'
         r'|academic(?:\s+(?:background|history|qualification))?'
+        r'|professional\s+qualifications?'
         r'|qualifications?'
         r'|degrees?)\s*(?::\s*(?P<content>.*))?$',
         re.IGNORECASE
@@ -910,6 +1002,10 @@ def extract_education(text):
     edu_lines = []
     in_edu_section = False
     found_edu_section = False
+    education_level_heading = re.compile(
+        r'(?i)^\s*(?:tertiary|secondary|primary|elementary)'
+        r'(?:\s+(?:level|education))?\s*:?\s*$'
+    )
 
     for line in lines:
         if not line:
@@ -932,6 +1028,15 @@ def extract_education(text):
             inline_content = (header_match.group('content') or '').strip() if header_match else ''
             if inline_content:
                 edu_lines.append(inline_content)
+            continue
+        # Education histories sometimes place awards between tertiary and
+        # secondary schooling. Reopen only on an exact, labelled school level
+        # after an Education heading has already established the context.
+        if found_edu_section and education_level_heading.fullmatch(line):
+            if edu_lines and edu_lines[-1] != '':
+                edu_lines.append('')
+            in_edu_section = True
+            edu_lines.append(line)
             continue
         if in_edu_section and (
             NEXT_SECTION_HEADERS.match(line)
@@ -1522,7 +1627,11 @@ def extract_education(text):
             if continuation_parts:
                 degree_description = f"{degree_description} {' '.join(continuation_parts)}"[:255]
         if re.search(r'(?i)\bmaster', degree_description) and any(
-            re.search(r'(?i)(?:present|ongoing|\b\d+\s+units?\b|complete\s+academic\s+requirements?)', detail)
+            re.search(
+                r'(?i)(?:present|ongoing|\b\d+\s+units?\b|'
+                r'complete(?:d)?(?:\s+comprehensive)?\s+academic\s+requirements?)',
+                detail,
+            )
             for detail in scan_lines[max(0, i - 1):i + 4]
         ) and 'ongoing' not in degree_description.casefold():
             degree_description = f'{degree_description} (Ongoing/Incomplete)'[:255]
@@ -1665,6 +1774,33 @@ def extract_education(text):
     for rec in records:
         is_valid, _ = validate_education_record(rec)
         if not is_valid:
+            continue
+        normalized_degree = re.sub(r'[^a-z0-9]+', ' ', rec['degree'].casefold()).strip()
+        if re.search(r'\b(?:master|m ed)\b', normalized_degree):
+            degree_family = 'masters'
+        elif re.search(r'\b(?:bachelor|beed|bsed)\b', normalized_degree):
+            degree_family = 'bachelors'
+        else:
+            degree_family = normalized_degree
+        semantic_duplicate = next((
+            existing for existing in unique_records
+            if existing['institution'].casefold() == rec['institution'].casefold()
+            and (
+                ('masters' if re.search(
+                    r'\b(?:master|m[ .]?ed)\b', existing['degree'], re.IGNORECASE
+                ) else 'bachelors' if re.search(
+                    r'\b(?:bachelor|beed|bsed)\b', existing['degree'], re.IGNORECASE
+                ) else re.sub(
+                    r'[^a-z0-9]+', ' ', existing['degree'].casefold()
+                ).strip())
+                == degree_family
+            )
+        ), None)
+        if semantic_duplicate:
+            # Prefer the descriptive degree over a later abbreviation-only
+            # statement such as "requirements leading to M.Ed".
+            if len(rec['degree']) > len(semantic_duplicate['degree']):
+                semantic_duplicate.update(rec)
             continue
         key = (rec['degree'].lower(), rec['institution'].lower())
         if key in seen:
@@ -2115,6 +2251,18 @@ def extract_experience_records(text):
             return True
         return False
 
+    def _is_duty_detail_line(value):
+        """Identify teaching/administrative duty details that mimic roles."""
+        return bool(re.match(
+            r'(?i)^(?:(?:advisory|subject)\s+teacher\s+for\b|'
+            r'teacher\s+adviser\s+for\s+level\b|'
+            r'teaching\s+(?:science|english|mathematics|math|filipino|subjects?)\b|'
+            r'time\s+spent\b|report\s+directly\b|'
+            r'assist(?:ed|ing)?\s+(?:customers?|clients?|the\b)|'
+            r'monitor(?:ed|ing)?\s+(?:the\b|office\b))',
+            (value or '').strip(),
+        ))
+
     def _is_probable_title(line_text):
         cleaned = BULLET_PREFIX_RE.sub('', line_text).strip(' :-•')
         if not cleaned or len(cleaned) > 140:
@@ -2126,6 +2274,8 @@ def extract_experience_records(text):
         if not TITLE_KEYWORDS.search(cleaned):
             return False
         if re.search(r'[:;]', cleaned):
+            return False
+        if _is_duty_detail_line(cleaned):
             return False
         detailed_internship_title = bool(re.match(
             r'(?i)^student\s+internship\b.*\bgrade\s+\d+', cleaned
@@ -2436,7 +2586,7 @@ def extract_experience_records(text):
             and not BULLET_PREFIX_RE.match(value)
             and not DATE_RANGE_RE.search(value)
             and not RESUME_SECTION_RE.match(value)
-            and not re.match(r'(?i)^(?:and|or|to|for|managed|developed|created|implemented|handled|handling|served|prepared|led|built|worked|provided|responsible|adviser|plan(?:ned|ning|s)?|completed|coordinated|encouraged|ensured|observed|supervised|participated|promoted)\b', value)
+            and not re.match(r'(?i)^(?:from|medium\s+of\s+instruction|student(?:\s+age\s+bracket)?|time\s+spent|and|or|to|for|managed|developed|created|implemented|handled|handling|served|prepared|led|built|worked|provided|responsible|adviser|assist(?:ed|ing)?|monitor(?:ed|ing)?|report(?:ed|ing)?|plan(?:ned|ning|s)?|completed|coordinated|encouraged|ensured|observed|supervised|participated|promoted)\b', value)
             and not re.match(r'(?i)^(?:client|company|employer|role|position|job\s*title|product\s*title|project\s*description|designation)\s*:', value)
             and not re.search(r'(?i)\b(?:email|phone|gmail|yahoo|outlook|responsibilities|duties)\b', value)
             and not _looks_like_location_line(value)
@@ -2490,7 +2640,7 @@ def extract_experience_records(text):
 
     def _add_structured(title, company, date_line, location=None):
         title = _clean_job_title(title)
-        if not title or re.search(
+        if not title or _is_duty_detail_line(title) or re.search(
             r'(?i)dean.?s\s+lister|president.?s\s+lister|with\s+honors|magna\s+cum\s+laude|'
             r'honor\s+society|achievement|award|^(?:handled|handling|served|prepared|adviser)\b', title
         ):
@@ -3005,6 +3155,24 @@ def extract_experience_records(text):
             location = DATE_RANGE_RE.sub('', scan_lines[index + 1]).strip(' ()[]-–—,;|') or None
             _add_structured(match.group(2).title(), match.group(1), scan_lines[index + 1], location)
 
+    # A home-service entry may name the service and dates without stating a
+    # formal position. Keep it transparently instead of borrowing a duty line
+    # as the job title.
+    for index in range(len(scan_lines) - 1):
+        service = scan_lines[index].strip()
+        date_line = scan_lines[index + 1].strip()
+        if (
+            re.fullmatch(r'(?i)tutorials?\s*\(\s*home\s+service\s*\)', service)
+            and DATE_RANGE_RE.search(date_line)
+        ):
+            location = (
+                scan_lines[index + 2].strip()
+                if index + 2 < len(scan_lines)
+                and _looks_like_location_line(scan_lines[index + 2])
+                else None
+            )
+            _add_structured('Position Not Stated', service, date_line, location)
+
     blocks = []
     current_block = []
     for i, raw_line in enumerate(scan_lines):
@@ -3233,7 +3401,7 @@ def extract_experience_records(text):
         return score
 
     for candidate_index, rec in enumerate(record_candidates):
-        if (not rec.get('job_title') or re.search(
+        if (not rec.get('job_title') or _is_duty_detail_line(rec.get('job_title')) or re.search(
             r'(?i)dean.?s\s+lister|president.?s\s+lister|with\s+honors|magna\s+cum\s+laude',
             rec.get('job_title') or ''
         )):

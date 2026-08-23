@@ -50,6 +50,7 @@ SECTION_ALIASES = {
     "education": (
         r"education", r"educational background", r"education history",
         r"educational history", r"educational qualifications?", r"education details",
+        r"educational attainment", r"education attainment", r"professional qualifications?",
         r"academic background", r"academic history", r"academic qualifications?", r"qualifications?",
         r"degrees?", r"scholastic records?", r"formations?", r"parcours acad[eé]mique",
     ),
@@ -59,6 +60,7 @@ SECTION_ALIASES = {
     ),
     "training": (
         r"training", r"trainings", r"seminars?", r"professional development",
+        r"trainings? attended", r"seminars? attended",
         r"trainings? and seminars?(?: attended)?",
         r"seminars? and trainings?(?: attended)?",
     ),
@@ -67,11 +69,17 @@ SECTION_ALIASES = {
         r"relevant coursework",
         r"(?:relevant )?coursework and projects?",
     ),
-    "awards": (r"awards?", r"achievements?", r"honors?", r"distinctions?"),
+    "awards": (
+        r"awards?", r"achievements?", r"honors?", r"distinctions?",
+        r"scholarships? and honors?(?: received)?",
+    ),
     "languages": (r"languages?", r"langues"),
     "references": (r"references?", r"character references?"),
     "profile": (r"summary", r"professional summary", r"profile", r"objective", r"career objective"),
-    "personal": (r"personal information", r"personal data", r"contact", r"contact information"),
+    "personal": (
+        r"personal information", r"personal data", r"personal background",
+        r"contact", r"contact information",
+    ),
     "affiliations": (r"affiliations?", r"organizations?", r"activities"),
 }
 

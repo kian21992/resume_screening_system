@@ -708,3 +708,134 @@ WORK EXPERIENCE
     ]
     assert "SCHOOL DESIGNATIONS / LEADERSHIP ROLES" not in names
     assert "Grade Level Chairperson" not in names
+
+
+def test_educational_attainment_is_contained_and_reopens_after_awards():
+    text = """Maria Alpha S. Bersabal
+WORK EXPERIENCE
+Off-Campus Teaching
+School of the Future
+November 2014 - February 2015
+Student Teacher handling elementary pupils
+EDUCATIONAL ATTAINMENT
+TERTIARY:
+BACHELOR OF ELEMENTARY EDUCATION
+Central Bicol State University of Agriculture
+June 2011 - April 2015
+SCHOLARSHIPS AND HONORS RECEIVED
+Academic Scholar
+SECONDARY:
+Nabua National High School
+June 2007 - April 2011
+ELEMENTARY:
+La Opinion Elementary School
+June 2001 - April 2007
+TRAININGS/SEMINARS ATTENDED
+TEACHING STRATEGIES FOR ELEMENTARY LEARNERS
+Nabua National High School
+February 2015
+CHARACTER REFERENCES
+Program Chairman, Elementary Education Program
+CBSUA College of Development Education
+APPLICATION LETTER
+I earned a Bachelor's degree in Elementary Education for the development of learners.
+"""
+
+    assert extract_education(text) == [
+        {
+            "degree": "BACHELOR OF ELEMENTARY EDUCATION",
+            "institution": "Central Bicol State University of Agriculture",
+        },
+        {
+            "degree": "High School",
+            "institution": "Nabua National High School",
+        },
+        {
+            "degree": "Elementary School",
+            "institution": "La Opinion Elementary School",
+        },
+    ]
+    assert [
+        (record["job_title"], record["company"])
+        for record in extract_experience_records(text)
+    ] == [("Off-Campus Teaching", "School of the Future")]
+    assert [
+        record["certification_name"] for record in extract_certifications(text)
+    ] == ["TEACHING STRATEGIES FOR ELEMENTARY LEARNERS"]
+
+
+def test_professional_qualification_and_duties_do_not_create_false_jobs():
+    text = """MR PHILIP O. PATIGDAS
+Mesaieed Qatar
+Mobile No. +974 66199309
+PROFESSIONAL QUALIFICATION
+Master's in Education (M.Ed.) Major in Administration & Supervision
+Cebu Technological University
+Completed Comprehensive Academic Requirements leading to M.Ed
+Summer 2002
+Bachelor in Elementary Education (BEED) Major in General Science
+Cebu Normal University
+Graduated Year 1997
+WORK HISTORY
+Classroom Teacher (Private School)
+Marie Ernestine School
+From 1997-2000
+Advisory Teacher for Grade 5
+Subject Teacher for Science
+Medium of Instruction
+English
+Classroom Adviser (Public School)
+Department of Education - Talima Elementary School
+From 2000-2009
+Teaching Science, English and Mathematics
+Time spent for teaching
+Private Tutor (Home Service)
+Tutorial classes at home
+From 2004-2007
+Senior Receptionist/Administrative Assistant
+AMWAJ
+From 2009-present
+Report directly to manager
+Assist customers and monitor office functions
+Tutorials (Home Service)
+From June 2010-May 2011
+Qatar
+Teaching English and Mathematics
+SEMINARS ATTENDED
+ENHANCEMENT OF TEACHING STRATEGIES
+May 2008
+Lapu-Lapu City Central Elementary School
+TECHNICAL SKILLS
+Microsoft Word
+"""
+
+    assert extract_contact_info(text)["phone"] == "+974 66199309"
+    assert extract_education(text) == [
+        {
+            "degree": (
+                "Master's in Education (M.Ed.) Major in Administration & Supervision "
+                "(Ongoing/Incomplete)"
+            ),
+            "institution": "Cebu Technological University",
+        },
+        {
+            "degree": "Bachelor in Elementary Education (BEED) Major in General Science",
+            "institution": "Cebu Normal University",
+        },
+    ]
+    assert [
+        (record["job_title"], record["company"])
+        for record in extract_experience_records(text)
+    ] == [
+        ("Classroom Teacher (Private School)", "Marie Ernestine School"),
+        (
+            "Classroom Adviser (Public School)",
+            "Department of Education - Talima Elementary School",
+        ),
+        ("Private Tutor (Home Service)", "Tutorial classes at home"),
+        ("Senior Receptionist/Administrative Assistant", "AMWAJ"),
+        ("Position Not Stated", "Tutorials (Home Service)"),
+    ]
+    assert [
+        record["certification_name"] for record in extract_certifications(text)
+    ] == ["ENHANCEMENT OF TEACHING STRATEGIES"]
