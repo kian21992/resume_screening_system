@@ -1,7 +1,16 @@
 from app.services.education_domain import validate_experience_record
 from app.services.extractor import _select_best_pdf_text, _text_quality_score
-from app.services.nlp_pipeline import extract_education, extract_experience_records
-from app.services.recommender import extract_resume_skills, estimate_decision_confidence
+from app.services.nlp_pipeline import (
+    extract_contact_info,
+    extract_certifications,
+    extract_education,
+    extract_experience_records,
+)
+from app.services.recommender import (
+    evaluate_candidate,
+    extract_resume_skills,
+    estimate_decision_confidence,
+)
 
 
 def test_pdf_bullets_and_wrapped_skill_lines_are_reconstructed():
@@ -307,6 +316,53 @@ Lesson Planning
     assert selected == correctly_ordered
 
 
+def test_pdf_selector_rejects_word_per_line_fragmentation():
+    readable = """MARLYN ROXAS CARREON, LPT.
+Mexico, Pampanga
+09169143899
+marlyn@example.com
+WORK OBJECTIVE:
+To obtain a teaching position where I can nurture students and impart my skills and abilities.
+EDUCATIONAL BACKGROUND:
+Post-Graduate Master in Arts in Education
+Pampanga State University
+S.Y. 2025-present
+Tertiary Bachelor of Secondary Education
+Pampanga State University
+S.Y. 2014-2018
+WORK EXPERIENCES:
+Nov. 2018 - Jan. 2019 ESL Teacher, NK International Academy
+June 2019 - June 2022 Infant Jesus Academy, Pampanga
+May 2023 - present Sucad National High School
+SEMINARS AND TRAININGS:
+2025 Division Training of Teacher-Tutors on Academic Recovery and Accessible Learning
+2023 Seminar Workshop for Teachers in Junior and Senior High School
+2022 Basic Computer Literacy
+2021 Teaching and Assessing K-12 Standards Across Learning Modalities
+2020 Whole Child Education Roadshow for Filipino Learners
+2019 Curriculum Mapping Workshop
+PERSONAL DATA:
+Date of Birth June 9, 1997
+Civil Status Single
+Language Tagalog Kapampangan English
+CHARACTER REFERENCES:
+Nherie Carreon Head Manager JGT Corporation
+Jayem Sanchez Senior High Teacher Betis National High School
+I certify that all information shown is true and correct.
+"""
+    fragmented = "\n".join(readable.split())
+
+    assert _text_quality_score(readable) > _text_quality_score(fragmented)
+
+    selected, method = _select_best_pdf_text([
+        ("pdfplumber", readable),
+        ("PyPDF2", fragmented),
+    ])
+
+    assert method == "pdfplumber"
+    assert selected == readable
+
+
 def test_role_then_date_employer_and_location_preserves_complete_record():
     text = """WORK EXPERIENCE
 Customer Service Associate
@@ -321,3 +377,334 @@ EDUCATION
         "location": "Clark Freeport Zone, Pampanga, Philippines",
         "years": 1.0,
     }]
+
+
+def test_unrelated_degree_and_work_are_not_described_as_teacher_matches():
+    text = """CHARLENE T. COCHON
+charlene@example.com | 09937013345
+EDUCATIONAL BACKGROUND
+Bachelor of Science Business Administration Major in Marketing
+Don Honorio Ventura Technological State University
+High School
+San Isidro High School
+Elementary Education
+San Isidro Elementary School
+WORK EXPERIENCE
+Auditor
+Precious Loyal Pet
+2023 - 2024
+Sales and Marketing Assistant
+NGT Venture Inc.
+2021 - 2023
+Cashier / Front Desk
+Reliability Confidence & Gas Corporation
+2019 - 2021
+SKILLS
+Microsoft Office
+Marketing Promotion
+Accounting
+"""
+
+    result = evaluate_candidate(
+        resume_text=text,
+        job_desc_text="Teacher Lesson Planning Classroom Management",
+        required_skills=["Lesson Planning", "Classroom Management"],
+        experience_req=2,
+        education_req="Bachelor's degree in Education",
+        job_title="TEACHER",
+    )
+
+    assert result["education_score"] == 50.0
+    assert result["experience_score"] == 40.0
+    assert "total year(s) of work history" in result["summary"]
+    assert "limited relevance to the TEACHER role" in result["summary"]
+    assert "degree field does not fully match" in result["summary"]
+    assert "work experience advantage" not in result["decision_explanation"]
+    assert "experience is far below the minimum requirement" not in result["decision_explanation"]
+    assert "work history has limited relevance" in result["decision_explanation"]
+
+
+def test_leading_colon_does_not_hide_role_or_create_reused_title_duplicate():
+    text = """WORK EXPERIENCES
+: Instructor II
+Pampanga State University
+2023- Present
+Instructor I
+Don Honorio Ventura State University
+2020-2023
+Teacher I
+Department of Education
+2019-2020
+Class Adviser
+Infant Jesus Academy
+2015-2019
+"""
+
+    records = extract_experience_records(text)
+
+    assert [(record["job_title"], record["company"]) for record in records] == [
+        ("Instructor II", "Pampanga State University"),
+        ("Instructor I", "Don Honorio Ventura State University"),
+        ("Teacher I", "Department of Education"),
+        ("Class Adviser", "Infant Jesus Academy"),
+    ]
+
+
+def test_level_first_education_and_wrapped_internship_titles_are_preserved():
+    text = """EDUCATIONAL BACKGROUND
+College
+Bachelor of Secondary Education Major in Filipino
+Pampanga State University (former Don Honorio
+Ventura State University)
+(2020-2024)
+Senior High School
+Humanities and Social Sciences Strand
+Pulung Santol National High School
+(2018-2020)
+Junior High School
+Pulung Santol National High School
+(2014-2018)
+Elementary
+Pulung Santol Elementary School
+(2008-2014)
+WORK EXPERIENCE
+Private Tutor
+(April 2025-Present)
+English as Secondary Language (ESL) Teacher
+SAT English Center
+(June 2024 - December 2024)
+Student Internship handled Grade 7, Grade 9,
+and Grade 10
+Pulung Santol National High School
+(September 2023 - May 2024)
+Literary Training Services (Tutoring Kids)
+Don Honorio Ventura State University
+(2020-2021)
+Work Immersion (Student Teacher)
+Becuran National High School
+(December 2019 - January 2020)
+SKILLS
+"""
+
+    assert extract_education(text) == [
+        {
+            "degree": "Bachelor of Secondary Education Major in Filipino",
+            "institution": (
+                "Pampanga State University (former Don Honorio Ventura State University)"
+            ),
+        },
+        {
+            "degree": "Senior High School - Humanities and Social Sciences Strand",
+            "institution": "Pulung Santol National High School",
+        },
+        {
+            "degree": "Junior High School",
+            "institution": "Pulung Santol National High School",
+        },
+        {
+            "degree": "Elementary School",
+            "institution": "Pulung Santol Elementary School",
+        },
+    ]
+
+    records = extract_experience_records(text)
+    assert [(record["job_title"], record["company"]) for record in records] == [
+        ("English as Secondary Language (ESL) Teacher", "SAT English Center"),
+        (
+            "Student Internship handled Grade 7, Grade 9, and Grade 10",
+            "Pulung Santol National High School",
+        ),
+        (
+            "Literary Training Services (Tutoring Kids)",
+            "Don Honorio Ventura State University",
+        ),
+        ("Work Immersion (Student Teacher)", "Becuran National High School"),
+        ("Private Tutor", "Not Identified"),
+    ]
+
+
+def test_header_single_name_and_plural_bachelors_degree_are_supported():
+    text = """Komala
+Sr Business System Analyst/Scrum Master
+PROFILE:
+Experienced business analyst.
+EDUCATION:
+Bachelors of Technology in Electrical Engineering.
+"""
+
+    assert extract_contact_info(text)["name"] == "Komala"
+    assert extract_education(text) == [{
+        "degree": "Bachelors of Technology in Electrical Engineering",
+        "institution": "Unknown Institution",
+    }]
+
+
+def test_applicant_signature_is_strong_name_evidence_and_dates_are_not_skills():
+    text = """CURRICULUM VITAE
+BAL LESTEROS , JEANNE PAULINE B . Brgy. Sto. Domingo, Capas, Tarlac
+jeannepauline03@gmail.com
+SKILLS
+Computer Literate
+NC holder CLASP (Communication, Language and Skills Program)
+April 2016
+ACHIEVEMENTS/AWARDS:
+Ballesteros, Jeanne Pauline B.
+Applicant
+"""
+
+    assert extract_contact_info(text)["name"] == "Jeanne Pauline B. Ballesteros"
+    assert extract_resume_skills(text) == [
+        "Computer Literate",
+        "NC holder CLASP (Communication, Language and Skills Program)",
+    ]
+
+
+def test_template_labels_do_not_pollute_education_or_undated_work():
+    text = """Jennifer O. Malang
+EDUCATION
+[Name of College/University] DON HONORIO VENTURA COLLEGE OF ARTS AND TRADES
+Bachelor of [Degree] BACHELOR OF SCINCE IN INDUSTRIAL EDUCATION (2002-2006)
+[Name of School] N/A
+Senior High School
+[Name of School] SAN ISIDRO HIGH SCHOOL (1998-2002)
+Junior High School
+EXPERIENCE
+Kindergarten Teacher
+[Magliman Integrated School]
+Plan and implement learning activities.
+TECHNICAL SKILLS
+"""
+
+    assert extract_education(text) == [
+        {
+            "degree": "BACHELOR OF SCIENCE IN INDUSTRIAL EDUCATION",
+            "institution": "DON HONORIO VENTURA COLLEGE OF ARTS AND TRADES",
+        },
+        {
+            "degree": "Senior High School",
+            "institution": "Unknown Institution",
+        },
+        {
+            "degree": "Junior High School",
+            "institution": "SAN ISIDRO HIGH SCHOOL",
+        },
+    ]
+    assert extract_experience_records(text) == [{
+        "job_title": "Kindergarten Teacher",
+        "company": "Magliman Integrated School",
+        "location": "Not Identified",
+        "years": 0.0,
+        "duration_unknown": True,
+    }]
+
+
+def test_known_highest_degree_field_outweighs_generic_duplicate():
+    text = """EDUCATION
+Bachelor's of Arts
+Bachelor of Arts in Political Science and Law
+WORK EXPERIENCE
+HR Personnel Assistant
+Example Company
+2020-2022
+"""
+
+    result = evaluate_candidate(
+        resume_text=text,
+        job_desc_text="Teacher Lesson Planning",
+        required_skills=[],
+        experience_req=0,
+        education_req="Bachelor's degree in Education",
+        job_title="Teacher",
+    )
+
+    assert result["education_score"] == 50.0
+
+
+def test_duration_table_rows_preserve_each_employer_and_role():
+    text = """PROFESSIONAL EXPERIENCE
+KOHLS, Menomonee Falls, WI                                      DURATION
+Sr. Business System Analyst/ Scrum Master                       AUG 2016 - PRESENT
+PROJECT DESCRIPTION: Store order tracking.
+NJDOC, Trenton, NJ                                              DURATION
+Sr. Business System Analyst                                     MARCH 2015 - JULY 2016
+PROJECT DESCRIPTION: Education data mart.
+AMWAY, Ada, MI                                                  DURATION
+Sr. Business Analyst                                            JAN 2014 - FEB 2015
+PROJECT DESCRIPTION: Product data improvements.
+Mutual Insurance, Mumbai, INDIA                                 DURATION
+Business Analyst                                                JULY 2010 - MARCH 2011
+PROJECT DESCRIPTION: Commercial insurance data mart.
+OLX, Hyderabad, INDIA                                           DURATION
+Jr. Business Analyst                                            OCT 2009 - JUNE 2010
+EDUCATION
+"""
+
+    records = extract_experience_records(text)
+    assert [(record["job_title"], record["company"]) for record in records] == [
+        ("Sr. Business System Analyst/ Scrum Master", "KOHLS"),
+        ("Sr. Business System Analyst", "NJDOC"),
+        ("Sr. Business Analyst", "AMWAY"),
+        ("Business Analyst", "Mutual Insurance"),
+        ("Jr. Business Analyst", "OLX"),
+    ]
+    assert [record["location"] for record in records] == [
+        "Menomonee Falls, WI",
+        "Trenton, NJ",
+        "Ada, MI",
+        "Mumbai, INDIA",
+        "Hyderabad, INDIA",
+    ]
+
+
+def test_singular_certification_heading_and_adjacent_skill_are_supported():
+    text = """CERTIFICATION:
+Scrum Master Accredited Certification (International Scrum Institute).
+Lean Six Sigma Green Belt Certification
+TECHNICAL SKILLS
+Basic Computer Skills Parent-Teacher Communication
+WORK EXPERIENCE
+"""
+
+    assert [
+        record["certification_name"] for record in extract_certifications(text)
+    ] == [
+        "Scrum Master Accredited Certification (International Scrum Institute)",
+        "Lean Six Sigma Green Belt Certification",
+    ]
+    assert extract_resume_skills(text) == [
+        "Basic Computer Skills",
+        "Parent-Teacher Communication",
+    ]
+
+
+def test_credential_section_rejects_issuer_heading_and_narrative_duplicates():
+    text = """CERTIFICATIONS
+Licensed Professional Teacher
+Licensed Professional Teacher with experience in classroom instruction
+Professional Regulation Commission (PRC)
+SCHOOL DESIGNATIONS / LEADERSHIP ROLES
+Grade Level Chairperson
+WORK EXPERIENCE
+"""
+
+    assert extract_certifications(text) == [{
+        "certification_name": "Licensed Professional Teacher",
+        "credential_type": "Professional License",
+        "issuer": None,
+        "date_obtained": None,
+    }]
+
+
+def test_designations_heading_stops_training_credential_extraction():
+    text = """SEMINARS AND TRAININGS
+Classroom Assessment Workshop
+SCHOOL DESIGNATIONS / LEADERSHIP ROLES
+Grade Level Chairperson
+WORK EXPERIENCE
+"""
+
+    names = [
+        record["certification_name"] for record in extract_certifications(text)
+    ]
+    assert "SCHOOL DESIGNATIONS / LEADERSHIP ROLES" not in names
+    assert "Grade Level Chairperson" not in names

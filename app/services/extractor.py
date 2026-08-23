@@ -44,6 +44,20 @@ def _text_quality_score(text):
         flags=re.IGNORECASE,
     ))
     punctuation_spacing = len(re.findall(r'\s+[,.!?;:]', cleaned))
+    one_word_line_ratio = (
+        sum(len(line.split()) == 1 for line in lines) / len(lines)
+        if lines else 0
+    )
+    # Some PDFs expose every positioned word as a separate text line. That
+    # fragmentation can falsely increase both the line-count reward and the
+    # section-heading count (a lone ``Education`` word looks like a heading),
+    # even though downstream parsers can no longer reconstruct phrases. Keep
+    # normal short bullet lists untouched and penalize only large documents
+    # where single-word lines dominate.
+    word_line_fragmentation = (
+        max(0.0, one_word_line_ratio - 0.55) * 180
+        if len(lines) >= 40 else 0.0
+    )
     # A recognized heading at the very end has no section content beneath it.
     # This commonly indicates that a coordinate-unaware PDF reader moved a
     # two-column heading after the entries it labels. Treat that as a strong
@@ -64,6 +78,7 @@ def _text_quality_score(text):
         - concatenated_headings * 5
         - punctuation_spacing * 0.12
         - trailing_orphaned_heading * 8
+        - word_line_fragmentation
     )
 
 

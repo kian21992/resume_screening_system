@@ -255,6 +255,11 @@ def extract_certifications(text):
         index = training_heading + 1
         while index < len(lines):
             line = lines[index]
+            if re.fullmatch(
+                r'(?i)(?:school\s+)?designations?\s*(?:/|&|and)\s*leadership\s+roles?',
+                line,
+            ):
+                break
             section = classify_section_heading(line)
             if section and section != 'training':
                 break
@@ -362,11 +367,17 @@ def extract_certifications(text):
             r'(?:professional\s+)?(?:certifications?|certificates?|licenses?|licensure|eligibility)'
             r'|(?:licenses?|licensure|eligibility)\s*(?:&|and|/)\s*certifications?'
             r'|certifications?\s*(?:&|and|/)\s*(?:licenses?|licensure|eligibility)'
-            r'(?:\s*[,/&]\s*(?:skills?|awards?))*',
-            line,
+            r'(?:\s*[,/&]\s*(?:skills?|awards?))*\s*:?',
+            line.rstrip(':').strip(),
             re.IGNORECASE,
         ):
             section_active = True
+            continue
+        if section_active and re.fullmatch(
+            r'(?i)(?:school\s+)?designations?\s*(?:/|&|and)\s*leadership\s+roles?',
+            line,
+        ):
+            section_active = False
             continue
         current_section = classify_section_heading(line)
         if section_active and current_section and current_section != 'certifications':
@@ -420,6 +431,9 @@ def extract_certifications(text):
                     candidate,
                     maxsplit=1,
                 )[0].strip(' .,:;|-')
+                candidate = re.split(
+                    r'(?i)\s+with\s+experience\b', candidate, maxsplit=1
+                )[0].strip(' .,:;|-')
                 if len(candidate.split()) > 16 or re.search(
                     r'(?i)\b(?:responsible\s+for|worked\s+on|developed|managed|objective|summary)\b',
                     candidate,
@@ -427,6 +441,11 @@ def extract_certifications(text):
                     continue
                 if re.fullmatch(
                     r'(?i)(certifications?|certificates?|licenses?|licensure|eligibility)',
+                    candidate,
+                ):
+                    continue
+                if re.fullmatch(
+                    r'(?i)Professional\s+Regulation\s+Commission(?:\s*\(PRC\))?',
                     candidate,
                 ):
                     continue
@@ -547,7 +566,9 @@ def extract_contact_info(text):
             elif lower in NAME_SUFFIXES:
                 formatted.append(lower.upper() if lower in {'ii', 'iii', 'iv', 'v'} else lower.capitalize() + '.')
             elif len(word.rstrip('.')) == 1:
-                formatted.append(word[0].upper() + ('.' if word.endswith('.') else ''))
+                # A single-letter name token is an initial even when PDF/DOCX
+                # extraction drops its printed period.
+                formatted.append(word[0].upper() + '.')
             else:
                 formatted.append(_capitalize_name_word(word))
         return ' '.join(formatted)
@@ -652,7 +673,7 @@ def extract_contact_info(text):
     if not name:
         signature_match = re.search(
             r"(?im)^\s*([^\n]{3,80}?)\s*\n\s*"
-            r"(?:APPLICANT(?:'S)?\s+SIGNATURE|SIGNATURE)\s*$",
+            r"(?:APPLICANT(?:'S)?\s+SIGNATURE|SIGNATURE|APPLICANT)\s*$",
             text,
         )
         if signature_match and _is_probable_person_name(signature_match.group(1)):
@@ -660,6 +681,17 @@ def extract_contact_info(text):
 
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     header_lines = lines[:12]
+
+    # A mononymous candidate can be a valid name. Accept a one-word first line
+    # only when the following line is clearly a professional title; this keeps
+    # ordinary one-word headings and technologies out of the identity field.
+    if (
+        not name
+        and len(header_lines) >= 2
+        and _is_probable_person_name(header_lines[0], allow_single=True)
+        and TECH_OR_ROLE_RE.search(header_lines[1])
+    ):
+        name = _format_person_name(_clean_name_candidate(header_lines[0]))
 
     email_name = None
     email_identity_tokens = set()
@@ -958,7 +990,7 @@ def extract_education(text):
         # Bachelor's — accept b.s./b.a./b.e./b.tech. as abbreviations,
         # but require standalone 'bs'/'ba'/'be' to be followed by context
         (re.compile(
-            r'\b(bachelor(?:\'s)?(?:\s+of|\s+in|\s+degree)?'
+            r'\b(bachelor(?:\'s|s)?(?:\s+of|\s+in|\s+degree)?'
             r'|college\s+graduate'
             r'|b\.s\.?|b\.a\.?|b\.e\.?|b\.tech\.?|btech'
             r'|bsed|beed|bsie|bsn|bsit|bscs|bsa|bba|bshm|bsba|ab'
@@ -1168,6 +1200,126 @@ def extract_education(text):
                 description = prefix.strip(' ,;-')
         return (description or fallback_label)[:255]
 
+    # Application templates sometimes leave their bracketed prompts in the
+    # submitted file. Pair each labelled institution with the immediately
+    # following credential, but never store the prompt itself as evidence.
+    template_records = []
+    template_line_indexes = set()
+    template_school_re = re.compile(
+        r'(?i)^\s*\[(?:Name\s+of\s+College/University|Name\s+of\s+School)\]\s*(?P<value>.*)$'
+    )
+    for template_index, template_line in enumerate(scan_lines):
+        template_match = template_school_re.match(template_line)
+        if not template_match:
+            continue
+        degree_index = template_index + 1
+        while degree_index < len(scan_lines) and not scan_lines[degree_index].strip():
+            degree_index += 1
+        if degree_index >= len(scan_lines):
+            continue
+        degree_value = scan_lines[degree_index].strip()
+        if not any(pattern.search(degree_value) for pattern, _ in DEGREE_PATTERNS):
+            continue
+
+        degree_value = re.sub(
+            r'(?i)^Bachelor\s+of\s+\[Degree\]\s*(?=Bachelor\b)',
+            '',
+            degree_value,
+        )
+        degree_value = re.sub(r'(?i)\[Degree\]\s*', '', degree_value)
+        degree_value = re.sub(r'(?i)\bSCINCE\b', 'SCIENCE', degree_value)
+        degree_value = re.sub(
+            r'\s*\(\s*(?:19|20)\d{2}\s*(?:-|\u2013|\u2014|to)\s*'
+            r'(?:19|20)\d{2}\s*\)\s*$',
+            '',
+            degree_value,
+        ).strip(' .,;:|-')
+
+        institution_value = re.sub(
+            r'\s*\(\s*(?:19|20)\d{2}\s*(?:-|\u2013|\u2014|to)\s*'
+            r'(?:19|20)\d{2}\s*\)\s*$',
+            '',
+            template_match.group('value').strip(),
+        )
+        institution = _clean_institution_name(institution_value, labelled=True)
+        template_records.append({
+            'degree': degree_value,
+            'institution': institution or 'Unknown Institution',
+        })
+        template_line_indexes.update({template_index, degree_index})
+
+    # A common modern layout lists a level heading, its degree/strand, and its
+    # school. Parse this as a coherent block when at least three levels are
+    # present, including institution names wrapped across visual lines.
+    level_first_re = re.compile(
+        r'(?i)^(College|Senior\s+High\s+School|Junior\s+High\s+School|Elementary)$'
+    )
+    level_first_headings = [
+        index for index, value in enumerate(scan_lines)
+        if level_first_re.fullmatch(value.strip())
+    ]
+    level_first_records = []
+    if len(level_first_headings) >= 3:
+        for heading_position, heading_index in enumerate(level_first_headings):
+            block_end = (
+                level_first_headings[heading_position + 1]
+                if heading_position + 1 < len(level_first_headings)
+                else len(scan_lines)
+            )
+            heading = scan_lines[heading_index].strip().casefold()
+            raw_block = [value.strip() for value in scan_lines[heading_index + 1:block_end] if value.strip()]
+            joined_block = []
+            block_index = 0
+            while block_index < len(raw_block):
+                value = raw_block[block_index]
+                while (
+                    value.count('(') > value.count(')')
+                    and block_index + 1 < len(raw_block)
+                ):
+                    block_index += 1
+                    value = f'{value} {raw_block[block_index]}'
+                joined_block.append(value)
+                block_index += 1
+
+            institution = next((
+                _clean_institution_name(value, labelled=True)
+                for value in joined_block
+                if re.search(rf'\b{INSTITUTION_KEYWORD}\b', value, re.IGNORECASE)
+                and _clean_institution_name(value, labelled=True)
+            ), None)
+            degree = None
+            if heading == 'college':
+                for value in joined_block:
+                    degree_match = next((
+                        (pattern.search(value), label)
+                        for pattern, label in DEGREE_PATTERNS
+                        if pattern.search(value)
+                    ), None)
+                    if degree_match:
+                        degree = _extract_degree_description(
+                            value, degree_match[0], degree_match[1]
+                        )
+                        break
+            elif heading == 'senior high school':
+                strand = next((
+                    value for value in joined_block
+                    if re.search(r'(?i)\bstrand\b', value)
+                ), None)
+                degree = (
+                    f'Senior High School - {strand}' if strand
+                    else 'Senior High School'
+                )
+            elif heading == 'junior high school':
+                degree = 'Junior High School'
+            else:
+                degree = 'Elementary School'
+
+            if degree and institution:
+                level_first_records.append({
+                    'degree': degree[:255],
+                    'institution': institution,
+                })
+
     # Some application-style resumes keep every education entry on one
     # labelled row: ``College: Example College (2020-2024)``.  Treat the rows
     # as a set only when at least two recognized levels are present.  That
@@ -1224,9 +1376,9 @@ def extract_education(text):
         r'(?P<level>secondary\s+level|intermediate\s+education|'
         r'elementary\s+level|primary\s+level|primary\s+education)\s*:',
     )
-    records = list(labelled_inline_records)
+    records = [*labelled_inline_records, *template_records]
     for i, line in enumerate(scan_lines):
-        if not line or i in labelled_line_indexes:
+        if not line or i in labelled_line_indexes or i in template_line_indexes:
             continue
         level_match = EDUCATION_LEVEL_RE.match(line)
         if level_match:
@@ -1410,6 +1562,9 @@ def extract_education(text):
             'degree': degree_description,
             'institution': institution or 'Unknown Institution'
         })
+
+    if len(level_first_records) == len(level_first_headings) and level_first_records:
+        records = level_first_records
 
     # ------------------------------------------------------------------
     # Step 5: Deduplicate — prefer records that have a real institution
@@ -1633,8 +1788,8 @@ def extract_years_of_experience(text):
     TITLE_HINT = re.compile(
         r'(?i)\b(developer|engineer|manager|analyst|consultant|architect|lead'
         r'|specialist|programmer|administrator|officer|designer|director'
-        r'|coordinator|supervisor|intern|associate|executive|scientist|teacher'
-        r'|instructor|professor|lecturer|faculty|principal|dean|tutor|registrar'
+        r'|coordinator|supervisor|intern(?:ship)?|associate|executive|scientist|teacher'
+        r'|instructor|professor|lecturer|faculty|principal|dean|tutor(?:ing)?|registrar'
         r'|librarian|educator|trainer|adviser|advisor|accountant|auditor|nurse'
         r'|physician|therapist|assistant|technician|staff|clerk|cashier'
         r'|representative|agent|secretary|receptionist|encoder|teller'
@@ -1823,6 +1978,25 @@ def extract_experience_records(text):
         line_index += 1
     scan_lines = normalized_scan_lines
 
+    # Preserve a job title wrapped after a trailing comma, such as “Student
+    # Internship handled Grade 7, Grade 9,” / “and Grade 10”.
+    wrapped_title_lines = []
+    line_index = 0
+    while line_index < len(scan_lines):
+        current_line = scan_lines[line_index]
+        next_line = scan_lines[line_index + 1].strip() if line_index + 1 < len(scan_lines) else ''
+        if (
+            re.search(r'(?i)\binternship\b', current_line)
+            and current_line.rstrip().endswith(',')
+            and re.match(r'(?i)^and\s+grade\b', next_line)
+        ):
+            wrapped_title_lines.append(f'{current_line.rstrip()} {next_line}')
+            line_index += 2
+            continue
+        wrapped_title_lines.append(current_line)
+        line_index += 1
+    scan_lines = wrapped_title_lines
+
     # ------------------------------------------------------------------
     # Step 2: Split into blocks on job-entry boundaries
     # ------------------------------------------------------------------
@@ -1877,8 +2051,8 @@ def extract_experience_records(text):
         r'\b(developer|engineer|manager|analyst|consultant|architect|lead|'
         r'specialist|programmer|administrator|officer|designer|director|staff|member|teaching|'
         r'validator|statistician|'
-        r'coordinator|supervisor|intern|volunteer|associate|executive|scientist|teacher|writer|'
-        r'instructor|professor|lecturer|faculty|principal|dean|tutor|counselor|counsellor|'
+        r'coordinator|supervisor|intern(?:ship)?|volunteer|associate|executive|scientist|teacher|writer|'
+        r'instructor|professor|lecturer|faculty|principal|dean|tutor(?:ing)?|counselor|counsellor|'
         r'registrar|librarian|educator|trainer|adviser|advisor|head\s+teacher|'
         r'guidance\s+counselor|guidance\s+counsellor|curriculum\s+developer|'
         r'academic\s+coordinator|academic\s+adviser|academic\s+advisor|'
@@ -1942,7 +2116,7 @@ def extract_experience_records(text):
         return False
 
     def _is_probable_title(line_text):
-        cleaned = BULLET_PREFIX_RE.sub('', line_text).strip(' -•')
+        cleaned = BULLET_PREFIX_RE.sub('', line_text).strip(' :-•')
         if not cleaned or len(cleaned) > 140:
             return False
         if EMAIL_RE.search(cleaned) or re.search(r'https?://|www\.', cleaned, re.IGNORECASE):
@@ -1953,7 +2127,13 @@ def extract_experience_records(text):
             return False
         if re.search(r'[:;]', cleaned):
             return False
-        if re.search(r'\b(?:using|with|for|and|or)\b', cleaned) and len(cleaned.split()) > 7 and not TITLE_LINE_RE.match(cleaned):
+        detailed_internship_title = bool(re.match(
+            r'(?i)^student\s+internship\b.*\bgrade\s+\d+', cleaned
+        ))
+        if (re.search(r'\b(?:using|with|for|and|or)\b', cleaned)
+                and len(cleaned.split()) > 7
+                and not TITLE_LINE_RE.match(cleaned)
+                and not detailed_internship_title):
             return False
         return True
 
@@ -2073,6 +2253,7 @@ def extract_experience_records(text):
             return ''
         # Remove a trailing date range or year
         raw = re.sub(r'^\s*(?:Client|Company|Employer|School|Institution|University|College|Organization|Organisation)\s*:\s*', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'^\s*\[\s*(.*?)\s*\]\s*$', r'\1', raw)
         raw = LOCATION_LINE_RE.sub('', raw)
         raw = DATE_RANGE_RE.sub('', raw)
         raw = MONTH_DATE_RANGE_RE.sub('', raw)
@@ -2105,7 +2286,15 @@ def extract_experience_records(text):
         doc = nlp(cleaned)
         orgs = [ent.text.strip() for ent in doc.ents if ent.label_ == 'ORG']
         places = [ent.text.strip() for ent in doc.ents if ent.label_ in {'GPE', 'LOC'}]
-        if orgs and places and company.lower().startswith(orgs[0].lower()):
+        org_prefix_has_boundary = bool(
+            orgs
+            and company.lower().startswith(orgs[0].lower())
+            and (
+                len(company) == len(orgs[0])
+                or company[len(orgs[0])] in ' ,-'
+            )
+        )
+        if orgs and places and org_prefix_has_boundary:
             company_remainder = company[len(orgs[0]):].strip(' ,.-')
             company = orgs[0]
             if company_remainder:
@@ -2138,7 +2327,7 @@ def extract_experience_records(text):
         return orgs[0] if orgs else None
 
     def _clean_job_title(raw):
-        value = BULLET_PREFIX_RE.sub('', raw or '').strip()
+        value = BULLET_PREFIX_RE.sub('', raw or '').strip().lstrip(':').strip()
         value = DATE_RANGE_RE.sub('', value)
         value = re.sub(r'\(\s*\)', '', value)
         value = re.sub(
@@ -2173,6 +2362,11 @@ def extract_experience_records(text):
         return cleaned_title
 
     def _parse_inline_role_company(line_text):
+        if re.match(
+            r'(?i)^\s*student\s+internship\b.*\bgrade\s+\d+',
+            line_text or '',
+        ):
+            return None, None, None
         without_dates = DATE_RANGE_RE.sub('', line_text or '')
         without_dates = re.sub(
             r'\([^)]*\)',
@@ -2243,7 +2437,7 @@ def extract_experience_records(text):
             and not DATE_RANGE_RE.search(value)
             and not RESUME_SECTION_RE.match(value)
             and not re.match(r'(?i)^(?:and|or|to|for|managed|developed|created|implemented|handled|handling|served|prepared|led|built|worked|provided|responsible|adviser|plan(?:ned|ning|s)?|completed|coordinated|encouraged|ensured|observed|supervised|participated|promoted)\b', value)
-            and not re.match(r'(?i)^(?:client|company|employer|role|position|job\s*title|product\s*title|designation)\s*:', value)
+            and not re.match(r'(?i)^(?:client|company|employer|role|position|job\s*title|product\s*title|project\s*description|designation)\s*:', value)
             and not re.search(r'(?i)\b(?:email|phone|gmail|yahoo|outlook|responsibilities|duties)\b', value)
             and not _looks_like_location_line(value)
             and not value.endswith(':')
@@ -2335,6 +2529,28 @@ def extract_experience_records(text):
             'duration_unknown': True,
         })
 
+    # Word tables often export an employer row ending in “DURATION”, followed
+    # by a role row containing the actual date range. Treat those two rows as
+    # one entry so the first employers in long histories are not skipped.
+    for index in range(len(scan_lines) - 1):
+        employer_row = scan_lines[index].strip()
+        role_row = scan_lines[index + 1].strip()
+        if not re.search(r'(?i)\bDURATION\s*$', employer_row):
+            continue
+        if not DATE_RANGE_RE.search(role_row):
+            continue
+        title = DATE_RANGE_RE.sub('', role_row).strip(' ()[]-–—,;|')
+        company = re.sub(r'(?i)\bDURATION\s*$', '', employer_row).strip()
+        if (
+            _is_probable_title(title)
+            and company
+            and len(company) <= 120
+            and not _is_probable_title(company)
+        ):
+            company_name, location = _split_company_location(company)
+            if company_name:
+                _add_structured(title, company_name, role_row, location)
+
     # Bulleted application-style histories commonly use four consecutive
     # lines for each job: role, employer, location, and date.  The generic
     # block parser can combine repeated entries when there are no blank lines,
@@ -2408,6 +2624,18 @@ def extract_experience_records(text):
                 BULLET_PREFIX_RE.sub('', scan_lines[index + 1]).strip()
                 if index + 1 < len(scan_lines) else ''
             )
+            if (
+                _is_probable_title(line)
+                and next_line
+                and _plausible_company(next_line)
+                and not _is_probable_title(next_line)
+                and (
+                    _has_organization_hint(next_line)
+                    or re.fullmatch(r'\s*\[[^\]]+\]\s*', next_line)
+                )
+            ):
+                _add_undated(line, next_line)
+                continue
             organization_like = bool(
                 _has_organization_hint(line)
                 or re.search(r'(?i)\b(?:DSWD|DepEd|program|department)\b', line)
@@ -3189,6 +3417,16 @@ def _drop_absorbed_records(records):
             if not outer_title or not inner_title or outer_title == inner_title:
                 continue
             # The longer title has swallowed the employer and location.
-            if outer_title.endswith(inner_title) and len(outer_title) > len(inner_title):
+            outer_company = norm(outer.get('company'))
+            inner_company = norm(inner.get('company'))
+            same_company = bool(
+                outer_company and outer_company == inner_company
+            )
+            swallowed_company = bool(
+                inner_company and inner_company in outer_title
+            )
+            if (outer_title.endswith(inner_title)
+                    and len(outer_title) > len(inner_title)
+                    and (same_company or swallowed_company)):
                 drop.add(i)
     return [rec for index, rec in enumerate(records) if index not in drop]

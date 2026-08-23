@@ -461,6 +461,13 @@ def _valid_section_skill(value):
         return False
     if _re.fullmatch(r"[\W\d_]+", value):
         return False
+    if _re.fullmatch(
+        r"(?i)(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
+        r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|"
+        r"Nov(?:ember)?|Dec(?:ember)?)\.?\s+(?:\d{1,2}(?:,\s*)?)?(?:19|20)\d{2}",
+        value.strip(),
+    ):
+        return False
     if _re.match(r"(?i)^(?:for|and|or|to|including|catering\s+to)\b", value):
         return False
     return True
@@ -605,6 +612,11 @@ def _skill_section_items(line):
     # Some visually separated PDF columns are flattened onto one line. Resume
     # competency sentences commonly reveal the lost boundary through a new
     # capitalized action phrase ("... curriculum Communicates clearly ...").
+    # Some Word templates place two short competencies in one table cell and
+    # lose the cell boundary during extraction.
+    line = _re.sub(
+        r"(?i)(\bSkills)\s+(?=Parent[- ]Teacher\b)", r"\1|", line
+    )
     chunks = _CONCATENATED_SKILL_START_RE.split(line)
     items = []
     for chunk in chunks:
@@ -1316,7 +1328,8 @@ def generate_analysis_narrative(job_title, fit_score, skill_score, exp_score, ed
                                 disqualified_by_critical_skills,
                                 matched_preferred=None, preferred_bonus=0.0,
                                 matched_critical_skills=None, missing_critical_skills=None,
-                                disqualification_reason=None):
+                                disqualification_reason=None,
+                                experience_relevance_factor=1.0):
     """
     Generates a unique, candidate-specific analysis narrative using all
     available evaluation signals. Each section is tailored to the actual data.
@@ -1401,13 +1414,21 @@ def generate_analysis_narrative(job_title, fit_score, skill_score, exp_score, ed
     # --- Experience section ---
     if experience_req and experience_req > 0:
         if total_exp_years >= experience_req:
-            exp_text = (
-                f"Their work history indicates approximately {total_exp_years:.1f} year(s) of relevant experience, "
-                f"meeting or exceeding the {experience_req}-year requirement (experience score: {exp_score:.0f}%)."
-            )
+            if experience_relevance_factor < 1.0:
+                exp_text = (
+                    f"The resume documents approximately {total_exp_years:.1f} total year(s) of work history, "
+                    f"which meets the {experience_req}-year duration requirement. However, the work history "
+                    f"has limited relevance to the {job_title} role, resulting in a relevance-adjusted "
+                    f"experience score of {exp_score:.0f}%."
+                )
+            else:
+                exp_text = (
+                    f"Their work history indicates approximately {total_exp_years:.1f} year(s) of relevant experience, "
+                    f"meeting or exceeding the {experience_req}-year requirement (experience score: {exp_score:.0f}%)."
+                )
         elif total_exp_years > 0:
             exp_text = (
-                f"Their work history reflects around {total_exp_years:.1f} year(s) of experience, "
+                f"Their work history reflects around {total_exp_years:.1f} total year(s) of experience, "
                 f"which falls short of the {experience_req}-year requirement "
                 f"(experience score: {exp_score:.0f}%)."
             )
@@ -1441,10 +1462,16 @@ def generate_analysis_narrative(job_title, fit_score, skill_score, exp_score, ed
             f"No specific education requirement was set for this role. "
             f"The candidate's highest detected credential is a {cand_edu_label}."
         )
-    elif cand_edu_rank >= job_edu_rank:
+    elif cand_edu_rank >= job_edu_rank and edu_score >= 99.5:
         edu_text = (
             f"The candidate's detected education level ({cand_edu_label}) meets or exceeds "
             f"the required {job_edu_label} for this role (education score: {edu_score:.0f}%)."
+        )
+    elif cand_edu_rank >= job_edu_rank:
+        edu_text = (
+            f"The candidate meets the required education level ({job_edu_label}), but the detected "
+            f"degree field does not fully match the configured requirement ({education_req}) "
+            f"(education score: {edu_score:.0f}%)."
         )
     else:
         edu_text = (
@@ -1483,7 +1510,8 @@ def generate_decision_explanation(job_title, recommendation_label, fit_score,
                                   missing_skills, matched_critical_skills,
                                   missing_critical_skills, matched_preferred,
                                   preferred_bonus, total_exp_years,
-                                  experience_req, education_req):
+                                  experience_req, education_req,
+                                  experience_relevance_factor=1.0):
     """
     Builds a concise explanation of the final screening decision.
     It keeps the key evidence, risks, scoring weights, and reviewer action visible.
@@ -1537,13 +1565,10 @@ def generate_decision_explanation(job_title, recommendation_label, fit_score,
         strengths.append(f"preferred skill(s): {', '.join(matched_preferred[:5])}")
     if total_exp_years > 0:
         if experience_req and experience_req > 0:
-            if total_exp_years >= experience_req:
+            if (total_exp_years >= experience_req
+                    and experience_relevance_factor >= 1.0):
                 strengths.append(
                     f"work experience advantage: about {total_exp_years:.1f} year(s), meeting the {experience_req}-year requirement"
-                )
-            else:
-                strengths.append(
-                    f"work experience advantage: about {total_exp_years:.1f} year(s), but below the {experience_req}-year requirement"
                 )
         else:
             strengths.append(f"work experience advantage: about {total_exp_years:.1f} year(s)")
@@ -1568,8 +1593,17 @@ def generate_decision_explanation(job_title, recommendation_label, fit_score,
         weaknesses.append(f"missing critical skill(s): {', '.join(missing_critical_skills)}")
     if missing_skills:
         weaknesses.append(f"missing required skill(s): {', '.join(missing_skills)}")
-    if experience_req and experience_req > 0 and exp_score < 100.0:
-        weaknesses.append(f"experience score did not fully clear the {experience_req}-year requirement")
+    if experience_req and experience_req > 0:
+        if total_exp_years < experience_req:
+            weaknesses.append(
+                f"documented experience falls below the {experience_req}-year duration requirement"
+            )
+        elif experience_relevance_factor < 1.0:
+            weaknesses.append(
+                f"work history meets the duration requirement but has limited relevance to the {job_title} role"
+            )
+        elif exp_score < 100.0:
+            weaknesses.append(f"experience score did not fully clear the {experience_req}-year requirement")
     if edu_score < 100.0:
         weaknesses.append(f"education did not fully match the configured requirement ({education_req or 'not specified'})")
 
@@ -1592,10 +1626,13 @@ def generate_decision_explanation(job_title, recommendation_label, fit_score,
         risk_points.append("zero required skills were matched")
     elif total_required and required_ratio < 0.5:
         risk_points.append("less than half of the required skills were matched")
-    if experience_req and experience_req > 0 and exp_score < 50.0:
-        risk_points.append("experience is far below the minimum requirement")
-    elif experience_req and experience_req > 0 and exp_score < 100.0:
-        risk_points.append("experience is below the stated minimum requirement")
+    if experience_req and experience_req > 0:
+        if total_exp_years < experience_req * 0.5:
+            risk_points.append("documented experience duration is far below the minimum requirement")
+        elif total_exp_years < experience_req:
+            risk_points.append("documented experience duration is below the stated minimum requirement")
+        elif experience_relevance_factor < 1.0:
+            risk_points.append("documented work history has limited relevance to the role")
     if missing_skills and recommendation_label != "Not Qualified":
         risk_points.append("some required skills are still missing")
 
@@ -1932,17 +1969,20 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
 
     # 6. Education Score — level, then scaled by subject relevance.
     cand_rank = 0
-    candidate_degree = ''
+    candidate_degrees = []
     if extracted_edu:
-        best = max(extracted_edu, key=lambda e: get_degree_rank(e['degree']))
-        cand_rank = get_degree_rank(best['degree'])
-        candidate_degree = ' '.join(
+        cand_rank = max(get_degree_rank(e['degree']) for e in extracted_edu)
+        # Field matching must use only credentials at the candidate's highest
+        # detected level. Otherwise an ``Elementary Education`` school record
+        # can make an unrelated bachelor's degree look like an Education degree.
+        candidate_degrees = [
             e.get('degree') or '' for e in extracted_edu
-        )
+            if get_degree_rank(e.get('degree')) == cand_rank
+        ]
     else:
         # Fallback: scan raw text directly
         cand_rank = get_degree_rank(resume_text)
-        candidate_degree = resume_text
+        candidate_degrees = [resume_text]
 
     job_rank = get_degree_rank(education_req)
     if job_rank <= 0:
@@ -1950,7 +1990,23 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         edu_relevance = 1.0
     else:
         edu_score = min((cand_rank / job_rank) * 100.0, 100.0)
-        edu_relevance = degree_field_relevance(candidate_degree, education_req)
+        required_field = _degree_field(education_req)
+        known_candidate_fields = [
+            field for field in (_degree_field(degree) for degree in candidate_degrees)
+            if field is not None
+        ]
+        if not required_field:
+            edu_relevance = 1.0
+        elif known_candidate_fields:
+            # A generic duplicate such as “Bachelor of Arts” must not override
+            # an explicit highest-level field such as Political Science. When
+            # multiple explicit same-level degrees exist, any real field match
+            # still receives full relevance.
+            edu_relevance = (
+                1.0 if required_field in known_candidate_fields else 0.5
+            )
+        else:
+            edu_relevance = 0.85
         edu_score = round(edu_score * edu_relevance, 2)
 
     # 7. Final Weighted Fit Score: Skills 50%, Experience 25%, Education 15%,
@@ -2004,7 +2060,8 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         preferred_bonus=preferred_bonus,
         matched_critical_skills=matched_critical_skills,
         missing_critical_skills=missing_critical_skills,
-        disqualification_reason=disqualification_reason
+        disqualification_reason=disqualification_reason,
+        experience_relevance_factor=exp_relevance,
     )
     decision_explanation = generate_decision_explanation(
         job_title=job_title,
@@ -2022,7 +2079,8 @@ def evaluate_candidate(resume_text, job_desc_text, required_skills, min_fit_scor
         preferred_bonus=preferred_bonus,
         total_exp_years=total_exp_years,
         experience_req=experience_req,
-        education_req=education_req
+        education_req=education_req,
+        experience_relevance_factor=exp_relevance,
     )
     confidence_level, confidence_reason = estimate_decision_confidence(
         recommendation_label=label,
