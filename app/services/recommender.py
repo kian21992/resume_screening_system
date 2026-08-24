@@ -192,7 +192,8 @@ SKILL_IMPLICATIONS = {
 
 _SKILL_SECTION_HEADER_RE = _re.compile(
     r"^\s*(?:technical\s+skills?|professional\s+skills?|personal\s+skills?"
-    r"|key\s+skills?|relevant\s+skills?|special\s+skills?|qualifications?\s*(?:&|and)\s*skills?|skills?"
+    r"|key\s+skills?|relevant\s+skills?|special\s+skills?|qualifications?\s*(?:&|and)\s*skills?"
+    r"|skills?\s*(?:&|and)\s*qualifications?|skills?"
     r"|skills?\s*(?:&|and|/)\s*(?:competenc(?:y|ies)|abilities|qualities"
     r"|attributes?|strengths?|interests?|expertise)"
     r"|skills?\s+highlights?|knowledge,?\s+skills?\s+and\s+abilities"
@@ -627,6 +628,43 @@ def _skill_section_items(line):
     if _re.search(r",\s+as\s+well\s+as\b", line, _re.IGNORECASE):
         normalized = _re.sub(r"\s+", " ", line).strip()
         return [normalized] if _valid_section_skill(normalized) else []
+
+    # Tag/chip layouts can be exported as one separator-free row. Split only
+    # when the entire row is composed of at least three known short labels;
+    # narrative competency sentences and ordinary multi-word skills stay
+    # untouched.
+    flat_chip_labels = (
+        "Communication Skills", "Customer Service", "Problem Solving",
+        "Critical Thinking", "Time Management", "Attention to Detail",
+        "Computer Literacy", "Classroom Management", "Lesson Planning",
+        "Team Leadership", "Teamwork", "Leadership", "Adaptability",
+        "Flexibility", "Collaboration", "Creativity",
+    )
+    flat_chip_pattern = _re.compile(
+        "(?:" + "|".join(
+            _re.escape(label)
+            for label in sorted(flat_chip_labels, key=len, reverse=True)
+        ) + ")",
+        _re.IGNORECASE,
+    )
+    normalized_chip_row = _re.sub(r"\s+", " ", line).strip()
+    flat_chip_items = []
+    chip_position = 0
+    while chip_position < len(normalized_chip_row):
+        chip_match = flat_chip_pattern.match(normalized_chip_row, chip_position)
+        if not chip_match:
+            flat_chip_items = []
+            break
+        flat_chip_items.append(chip_match.group(0))
+        chip_position = chip_match.end()
+        if chip_position < len(normalized_chip_row):
+            whitespace = _re.match(r"\s+", normalized_chip_row[chip_position:])
+            if not whitespace:
+                flat_chip_items = []
+                break
+            chip_position += whitespace.end()
+    if len(flat_chip_items) >= 3:
+        return flat_chip_items
 
     # Some visually separated PDF columns are flattened onto one line. Resume
     # competency sentences commonly reveal the lost boundary through a new

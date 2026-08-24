@@ -1100,3 +1100,177 @@ REFERENCES
         ("Branch Associate", "VILLARICA PAWNSHOP"),
         ("Cashier (Promoted)", "VILLARICA PAWNSHOP"),
     ]
+
+
+def test_myca_labelled_sections_preserve_skills_education_and_current_work():
+    text = """Myca Angela C. Lingad
+EDUCATION
+TERTIARY : City College of Angeles (Bachelor of Technical Vocational
+Teacher Education)
+(2021-2025)
+SECONDARY : Angeles City National Trade School
+(2015-2021)
+PRIMARY : Sto.Rosario Elementary School
+(2009-2015)
+SKILLS AND QUALIFICATIONS
+- Communication Skills
+- Teamwork & Collaboration
+- Time Management & Organization
+- Attention to Detail
+- Technical Skills
+- Adaptability and Flexible
+ACHIEVEMENTS
+WORK EXPERIENCE
+- TLE Teacher | Nazarene Academy, Inc. - Barangay Salapungan, Angeles City
+(August 2026) - Present
+PERSONAL BACKGROUND:
+Age - 24 years old
+"""
+
+    assert extract_resume_skills(text) == [
+        "Communication Skills",
+        "Teamwork & Collaboration",
+        "Time Management & Organization",
+        "Attention to Detail",
+        "Adaptability and Flexible",
+    ]
+    assert extract_education(text) == [
+        {
+            "degree": "Bachelor of Technical Vocational Teacher Education",
+            "institution": "City College of Angeles",
+        },
+        {
+            "degree": "High School",
+            "institution": "Angeles City National Trade School",
+        },
+        {
+            "degree": "Elementary School",
+            "institution": "Sto.Rosario Elementary School",
+        },
+    ]
+    assert extract_experience_records(text) == [{
+        "job_title": "TLE Teacher",
+        "company": "Nazarene Academy, Inc.",
+        "location": "Barangay Salapungan, Angeles City",
+        "years": 0.08,
+    }]
+
+
+def test_marlyn_year_first_training_titles_keep_wrapped_continuations():
+    text = """MARLYN ROXAS CARREON, LPT.
+SEMINARS and TRAININGS:
+2025 Participant, Division Training of Teacher-Tutors on the Academic
+Recovery and Accessible Learning (ARAL) Program
+2023 Participant, Pangsangay na Seminar-Worksyap sa Pagsulat ng
+Pananaliksik ng mga Guro sa JHS at SHS Filipino
+2022 Participant, Basic Computer Literacy
+Marlyn R. Carreon, page 2
+2022 Participant, Annual Educators' Congress (Aecon) 2022: Keeping It
+Real
+PERSONAL DATA:
+"""
+
+    assert extract_certifications(text) == [
+        {
+            "certification_name": "Licensed Professional Teacher",
+            "credential_type": "Professional License",
+            "issuer": None,
+            "date_obtained": None,
+        },
+        {
+            "certification_name": "Division Training of Teacher-Tutors on the Academic Recovery and Accessible Learning (ARAL) Program",
+            "credential_type": "Training",
+            "issuer": None,
+            "date_obtained": "2025",
+        },
+        {
+            "certification_name": "Pangsangay na Seminar-Worksyap sa Pagsulat ng Pananaliksik ng mga Guro sa JHS at SHS Filipino",
+            "credential_type": "Training",
+            "issuer": None,
+            "date_obtained": "2023",
+        },
+        {
+            "certification_name": "Basic Computer Literacy",
+            "credential_type": "Training",
+            "issuer": None,
+            "date_obtained": "2022",
+        },
+        {
+            "certification_name": "Annual Educators' Congress (Aecon) 2022: Keeping It Real",
+            "credential_type": "Training",
+            "issuer": None,
+            "date_obtained": "2022",
+        },
+    ]
+
+
+def test_dave_duty_sentences_do_not_duplicate_an_existing_job():
+    text = """WORK EXPERIENCE
+Grade 4 Teacher  |  Sampleville Elementary School     June 2021 - Present
+Organize classroom activities and school events such as reading week and science fair
+Mentor 2 new teachers during their first year on the job
+Grade 2 Teacher  |  Riverside Elementary School     June 2018 - May 2021
+Handled a class of 30 young learners.
+Student Teacher  |  Central Luzon Demonstration School     Nov 2017 - Mar 2018
+Assisted the cooperating teacher in daily classroom instruction and lesson preparation
+EDUCATION
+"""
+
+    assert [
+        (record["job_title"], record["company"])
+        for record in extract_experience_records(text)
+    ] == [
+        ("Grade 4 Teacher", "Sampleville Elementary School"),
+        ("Grade 2 Teacher", "Riverside Elementary School"),
+        ("Student Teacher", "Central Luzon Demonstration School"),
+    ]
+
+
+def test_jake_flat_skill_chips_and_split_date_rows_are_reconstructed():
+    text = """WORK EXPERIENCE
+July 2024 - March 2026 Teacher
+Infant Jesus Academy - Brgy. San Isidro, City of San Fernando, Pampanga
+January 2021 - April
+2021 Factory Worker
+Universal Robina Corporation - Brgy. Del Rosario, City of San Fernando, Pampanga
+EDUCATION
+July 2019 - Sept 2023 City College of San Fernando Pampanga
+Tertiary Education - San Fernando, Pampanga
+June 2017 - April 2019 San Matias National High School
+Senior High School - Brgy. San Matias, Sto. Tomas, Pampanga
+June 2013 - March 2017 San Nicolas Integrated School
+Junior High School - Brgy. San Nicolas, City of San Fernando, Pampanga
+SKILLS
+Communication Skills Problem Solving Leadership Customer Service Teamwork Adaptability
+CERTIFICATIONS & PROFESSIONAL DEVELOPMENT
+"""
+
+    assert extract_resume_skills(text) == [
+        "Communication Skills",
+        "Problem Solving",
+        "Leadership",
+        "Customer Service",
+        "Teamwork",
+        "Adaptability",
+    ]
+    assert extract_education(text) == [
+        {
+            "degree": "Tertiary Education",
+            "institution": "City College of San Fernando Pampanga",
+        },
+        {
+            "degree": "Senior High School",
+            "institution": "San Matias National High School",
+        },
+        {
+            "degree": "Junior High School",
+            "institution": "San Nicolas Integrated School",
+        },
+    ]
+    assert [
+        (record["job_title"], record["company"])
+        for record in extract_experience_records(text)
+    ] == [
+        ("Teacher", "Infant Jesus Academy - Brgy. San Isidro"),
+        ("Factory Worker", "Universal Robina Corporation - Brgy. Del Rosario"),
+    ]

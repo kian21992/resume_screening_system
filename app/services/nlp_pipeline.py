@@ -391,6 +391,32 @@ def extract_certifications(text):
             if index in training_consumed:
                 index += 1
                 continue
+            # Year-first seminar tables often wrap a title onto the following
+            # physical row. Handle this before the generic inline-date branch,
+            # which would otherwise keep only the first row and discard the
+            # continuation.
+            year_entry = re.match(
+                r'^(?P<year>(?:19|20)\d{2})\s+(?:(?:Participant|Paticipant),?\s*)?(?P<title>.+)$',
+                line,
+                re.IGNORECASE,
+            )
+            if year_entry:
+                title_parts = [year_entry.group('title').strip()]
+                lookahead = index + 1
+                while lookahead < section_end:
+                    continuation = lines[lookahead]
+                    if (re.match(r'^(?:19|20)\d{2}\s+', continuation)
+                            or training_date_re.fullmatch(continuation.strip(' ()'))
+                            or classify_section_heading(continuation)):
+                        break
+                    if re.search(r'(?i)\bpage\s+\d+\b', continuation):
+                        lookahead += 1
+                        continue
+                    title_parts.append(continuation)
+                    lookahead += 1
+                add(' '.join(title_parts), 'Training', year_entry.group('year'))
+                index = lookahead
+                continue
             inline_date = date_re.search(line)
             if inline_date and not date_re.fullmatch(line.strip(' ()')):
                 title = date_re.sub('', line, count=1).strip(' .,:;|-')
@@ -1648,6 +1674,75 @@ def extract_education(text):
             })
             labelled_line_indexes.add(line_index)
 
+    # A compact school-history form can put the level, institution, and a
+    # parenthesized degree on one row, with the degree wrapping once. Require
+    # at least two explicit level labels so an isolated narrative colon is not
+    # interpreted as education evidence.
+    compact_level_re = re.compile(
+        r'(?i)^(?P<label>tertiary|secondary|primary)\s*:\s*(?P<body>.+)$'
+    )
+    compact_level_matches = []
+    for line_index, line_value in enumerate(scan_lines):
+        compact_match = compact_level_re.match(line_value.strip())
+        if compact_match:
+            compact_level_matches.append((line_index, compact_match))
+
+    compact_level_records = []
+    compact_level_indexes = set()
+    compact_level_layout = (
+        len(compact_level_matches) >= 2
+        and all(
+            re.search(
+                rf'\b{INSTITUTION_KEYWORD}\b', match.group('body'), re.IGNORECASE
+            )
+            for _line_index, match in compact_level_matches
+        )
+    )
+    if compact_level_layout:
+        for line_index, compact_match in compact_level_matches:
+            body = compact_match.group('body').strip()
+            compact_level_indexes.add(line_index)
+            if (
+                body.count('(') > body.count(')')
+                and line_index + 1 < len(scan_lines)
+                and scan_lines[line_index + 1].count(')') > scan_lines[line_index + 1].count('(')
+            ):
+                body = f"{body} {scan_lines[line_index + 1].strip()}"
+                compact_level_indexes.add(line_index + 1)
+
+            label = compact_match.group('label').casefold()
+            degree = {
+                'tertiary': 'Tertiary Education',
+                'secondary': 'High School',
+                'primary': 'Elementary School',
+            }[label]
+            institution_value = body
+            parenthesized_degree = re.search(
+                r'\((?P<degree>(?:Bachelor|Master|Doctor|Associate)\b[^)]*)\)',
+                body,
+                re.IGNORECASE,
+            )
+            if parenthesized_degree:
+                degree = re.sub(
+                    r'\s+', ' ', parenthesized_degree.group('degree')
+                ).strip(' .,;:|-')[:255]
+                institution_value = body[:parenthesized_degree.start()].strip()
+            institution_value = re.sub(
+                r'\s*\(\s*(?:19|20)\d{2}\s*(?:-|\u2013|\u2014|to|/)\s*'
+                r'(?:19|20)\d{2}\s*\)\s*$',
+                '',
+                institution_value,
+                flags=re.IGNORECASE,
+            )
+            institution = _clean_institution_name(
+                institution_value, labelled=True
+            )
+            if institution:
+                compact_level_records.append({
+                    'degree': degree,
+                    'institution': institution,
+                })
+
     # ------------------------------------------------------------------
     # Step 4: Scan lines for degree matches
     # ------------------------------------------------------------------
@@ -1759,8 +1854,49 @@ def extract_education(text):
         })
         paired_level_indexes.update({line_index, line_index + 1})
 
+    # Date-first education grids can flatten the date and institution into one
+    # row and place the explicit level on the next row. Preserve that direct
+    # pair and remove the leading date from the institution.
+    education_month = (
+        r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|'
+        r'Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|'
+        r'Nov(?:ember)?|Dec(?:ember)?)\.?'
+    )
+    date_first_institution_re = re.compile(
+        rf'(?i)^{education_month}\s*(?:19|20)\d{{2}}\s*'
+        rf'(?:-|\u2013|\u2014|to)\s*{education_month}\s*(?:19|20)\d{{2}}\s+'
+        r'(?P<institution>.+)$'
+    )
+    following_level_re = re.compile(
+        r'(?i)^(?P<level>Tertiary\s+Education|Senior\s+High\s+School|'
+        r'Junior\s+High\s+School)\b'
+    )
+    for line_index in range(len(scan_lines) - 1):
+        institution_match = date_first_institution_re.match(
+            scan_lines[line_index].strip()
+        )
+        level_match = following_level_re.match(
+            scan_lines[line_index + 1].strip()
+        )
+        if not institution_match or not level_match:
+            continue
+        institution_value = re.sub(
+            r'(?:\s+-\s*)+$', '', institution_match.group('institution')
+        ).strip()
+        institution = _clean_institution_name(
+            institution_value, labelled=True
+        )
+        if not institution:
+            continue
+        paired_level_records.append({
+            'degree': re.sub(r'\s+', ' ', level_match.group('level')).strip(),
+            'institution': institution,
+        })
+        paired_level_indexes.update({line_index, line_index + 1})
+
     records = [
         *labelled_inline_records,
+        *compact_level_records,
         *template_records,
         *paired_level_records,
     ]
@@ -1768,6 +1904,7 @@ def extract_education(text):
         if (
             not line
             or i in labelled_line_indexes
+            or i in compact_level_indexes
             or i in template_line_indexes
             or i in paired_level_indexes
         ):
@@ -2572,8 +2709,9 @@ def extract_experience_records(text):
         rf'(?:{FULL_MONTH_DATE}|{MONTH_YEAR_DATE}|\d{{1,2}}[/-]\d{{2,4}}|(?:19|20)\d{{2}})'
     )
     DATE_RANGE_RE = re.compile(
-            rf'(?P<start>{DATE_TOKEN})\s*(?:-|\u2013|\u2014|to|up\s+to)\s*'
-        rf'(?P<end>Present|Current|Till\s+date|To\s+date|{DATE_TOKEN})\b',
+        rf'\(?(?P<start>{DATE_TOKEN})\)?\s*'
+        rf'(?:-|\u2013|\u2014|to|up\s+to)\s*'
+        rf'\(?(?P<end>Present|Current|Till\s+date|To\s+date|{DATE_TOKEN})\)?(?!\w)',
         re.IGNORECASE
     )
     MONTH_DATE_RANGE_RE = DATE_RANGE_RE
@@ -2654,6 +2792,30 @@ def extract_experience_records(text):
             scan_lines[line_index + 2].strip()
             if line_index + 2 < len(scan_lines) else ''
         )
+        split_date_start = re.fullmatch(
+            rf'(?P<start>{MONTH_TOKEN}\s+\d{{4}})\s*'
+            rf'(?:-|\u2013|\u2014|to)\s*(?P<end_month>{MONTH_TOKEN})',
+            current,
+            re.IGNORECASE,
+        )
+        split_date_end = re.match(
+            r'^(?P<end_year>(?:19|20)\d{2})\s+(?P<title>.+)$',
+            next_line,
+            re.IGNORECASE,
+        )
+        if (
+            split_date_start
+            and split_date_end
+            and TITLE_KEYWORDS.search(split_date_end.group('title'))
+        ):
+            repaired_experience_lines.append(
+                f"{split_date_start.group('start')} - "
+                f"{split_date_start.group('end_month')} "
+                f"{split_date_end.group('end_year')} "
+                f"{split_date_end.group('title')}"
+            )
+            line_index += 2
+            continue
         if (
             next_line
             and second_next
@@ -2872,11 +3034,20 @@ def extract_experience_records(text):
         location_parts = parts[1:]
 
         # Keep legal suffixes attached when they are separated by a comma.
-        if location_parts and re.fullmatch(
-            r'(?i)(?:inc\.?|llc|ltd\.?|limited|corp\.?|corporation|pvt\.?\s+ltd\.?)',
-            location_parts[0],
-        ):
-            company = f"{company}, {location_parts.pop(0)}"
+        legal_suffix_re = (
+            r'(?:inc\.?|llc|ltd\.?|limited|corp\.?|corporation|pvt\.?\s+ltd\.?)'
+        )
+        if location_parts:
+            suffix_and_location = re.match(
+                rf'(?i)^(?P<suffix>{legal_suffix_re})\s*[-\u2013\u2014]\s*'
+                r'(?P<location>.+)$',
+                location_parts[0],
+            )
+            if suffix_and_location:
+                company = f"{company}, {suffix_and_location.group('suffix')}"
+                location_parts[0] = suffix_and_location.group('location')
+            elif re.fullmatch(legal_suffix_re, location_parts[0], re.IGNORECASE):
+                company = f"{company}, {location_parts.pop(0)}"
 
         # Handle extraction artifacts such as "IBM DALLAS,TEXAS", where the
         # company and city were concatenated without a delimiter.
@@ -4016,7 +4187,37 @@ def extract_experience_records(text):
             (rec.get('job_title') or '').strip(),
         ):
             continue
+        legal_location = re.match(
+            r'(?i)^(?P<suffix>inc\.?|corp\.?|corporation|ltd\.?)\s*,\s*'
+            r'(?P<location>.+)$',
+            (rec.get('location') or '').strip(),
+        )
+        if legal_location and _has_organization_hint(rec.get('company')):
+            suffix = legal_location.group('suffix').rstrip('.')
+            if suffix.casefold() in {'inc', 'corp', 'ltd'}:
+                suffix = f'{suffix.title()}.'
+            rec['company'] = f"{rec['company'].rstrip(' ,')}, {suffix}"
+            rec['location'] = legal_location.group('location').strip()
         company_value = (rec.get('company') or '').strip()
+        duty_sentence_company = bool(
+            len(company_value.split()) >= 5
+            and re.match(
+                r'(?i)^(?:assist(?:ed|ing)?|coordinate(?:d|ing)?|create(?:d|ing)?|'
+                r'develop(?:ed|ing)?|maintain(?:ed|ing)?|mentor(?:ed|ing)?|'
+                r'organiz(?:e|ed|ing)|plan(?:ned|ning)?|prepare(?:d|ing)?|'
+                r'provide(?:d|ing)?|track(?:ed|ing)?)\b',
+                company_value,
+            )
+        )
+        if duty_sentence_company and any(
+            other is not rec
+            and _has_organization_hint(other.get('company'))
+            and other.get('job_title', '').casefold() in rec.get('job_title', '').casefold()
+            and other.get('company', '').casefold() in rec.get('job_title', '').casefold()
+            and abs(float(other.get('years') or 0) - float(rec.get('years') or 0)) < 0.05
+            for other in record_candidates
+        ):
+            continue
         if (
             not company_value
             or re.match(r'^[\W_]', company_value)
