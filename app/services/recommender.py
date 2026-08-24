@@ -192,7 +192,7 @@ SKILL_IMPLICATIONS = {
 
 _SKILL_SECTION_HEADER_RE = _re.compile(
     r"^\s*(?:technical\s+skills?|professional\s+skills?|personal\s+skills?"
-    r"|key\s+skills?|relevant\s+skills?|special\s+skills?|skills?"
+    r"|key\s+skills?|relevant\s+skills?|special\s+skills?|qualifications?\s*(?:&|and)\s*skills?|skills?"
     r"|skills?\s*(?:&|and|/)\s*(?:competenc(?:y|ies)|abilities|qualities"
     r"|attributes?|strengths?|interests?|expertise)"
     r"|skills?\s+highlights?|knowledge,?\s+skills?\s+and\s+abilities"
@@ -205,13 +205,13 @@ _NON_SKILL_SECTION_RE = _re.compile(
     r"^\s*(?:objective|career\s+objective|summary|profile|professional\s+summary|contact(?:\s+information)?"
     r"|education(?:al\s+(?:background|attainment))?|academic\s+background"
     r"|academic\s+(?:credentials?|qualifications?)|educational\s+qualifications?"
-    r"|work\s+experience|professional\s+experience|experience"
+    r"|work\s+experience|work\s*(?:&|and)\s*training\s+experience|professional\s+experience|experience"
     r"|employment(?:\s+history)?|projects?|certifications?|licenses?|trainings?"
     r"|professional\s+trainings?(?:\s+and\s+certifications?)?"
     r"|seminars?|awards?|achievements?"
     r"|other\s+educational\s+achievements\s+and\s+experiences"
     r"|references?|personal\s+(?:information|data)"
-    r"|interests?|activities|affiliations?|publications?|volunteer(?:ing)?(?:\s+experience)?"
+    r"|interests?(?:\s*(?:&|and)\s*hobbies)?|activities|affiliations?|publications?|volunteer(?:ing)?(?:\s+experience)?"
     r"|organizations?|professional\s+development)"
     r"(?:\s*:\s*.*)?\s*$",
     _re.IGNORECASE,
@@ -648,7 +648,7 @@ _SKILL_BULLET_RE = _re.compile(
     _re.IGNORECASE,
 )
 _WRAPPED_SKILL_PREFIX_RE = _re.compile(
-    r"^(?:curriculum\s+and|verbal\s+and|modifying\b|integrating\b|utilizing\b"
+    r"^(?:curriculum\s+and|verbal\s+and|skilled\b|knowledgeable\b|modifying\b|integrating\b|utilizing\b"
     r"|providing\b|excellent\s+in\b)",
     _re.IGNORECASE,
 )
@@ -678,7 +678,7 @@ def _should_join_wrapped_skill(previous, continuation, joined_lines=0):
     """Detect a PDF-wrapped continuation of an explicit bullet item."""
     previous = _SKILL_BULLET_RE.sub("", previous or "").strip()
     continuation = (continuation or "").strip()
-    if not previous or not continuation or len(continuation.split()) > 5:
+    if not previous or not continuation or len(continuation.split()) > 8:
         return False
     if _SKILL_SECTION_HEADER_RE.match(continuation) or _NON_SKILL_SECTION_RE.match(continuation):
         return False
@@ -703,7 +703,9 @@ def _should_join_wrapped_skill(previous, continuation, joined_lines=0):
     # "Integrating" commonly wrap across two ("... Teaching and Learning" +
     # "Processes"). Limiting depth prevents the next standalone skill from
     # being swallowed after the phrase is complete.
-    max_joined_lines = 2 if _re.match(r"(?i)^integrating\b", previous) else 1
+    max_joined_lines = 2 if _re.match(
+        r"(?i)^(?:integrating|skilled|knowledgeable)\b", previous
+    ) else 1
     return joined_lines < max_joined_lines
 
 
@@ -724,6 +726,9 @@ def extract_resume_skills(resume_text, additional_skills=None):
         "• ",
         text,
     )
+    # A missing embedded bullet font is often exposed as U+FFFD at the start
+    # of a row. Treat only that leading marker as a bullet.
+    text = _re.sub(r'(?m)^\s*\ufffd\s*', '- ', text)
     text = _re.sub(
         r'(?m)^([^\n]{3,60}(?:&|and)\s+[A-Za-z]+)\n(?=[a-z])',
         r'\1 ',
@@ -780,13 +785,38 @@ def extract_resume_skills(resume_text, additional_skills=None):
             value += " " + continuation
         add_section_line(value)
 
+    # When two short sidebar sections share visual rows, a coordinate reader
+    # can emit ``SKILLS``, then ``LANGUAGE``, then alternate their bullets.
+    # Remove only the explicit language heading and bare language-name bullets
+    # so the wrapped skill sentence can be reconstructed normally.
+    parallel_language_rows = set()
+    common_language_re = _re.compile(
+        r"(?i)^\s*[-*â€¢â–ª\u2022\u25aa]?\s*(?:English|Filipino|Tagalog|Spanish|"
+        r"French|German|Arabic|Mandarin|Chinese|Japanese|Korean|Hindi)\s*$"
+    )
+    for index in range(len(text_lines) - 1):
+        if (
+            _SKILL_SECTION_HEADER_RE.match(text_lines[index].strip())
+            and classify_section_heading(text_lines[index + 1].strip()) == "languages"
+        ):
+            parallel_language_rows.add(index + 1)
+            for lookahead in range(index + 2, len(text_lines)):
+                candidate = text_lines[lookahead].strip()
+                boundary = classify_section_heading(candidate)
+                if boundary and boundary not in {"skills", "languages"}:
+                    break
+                if common_language_re.fullmatch(candidate):
+                    parallel_language_rows.add(lookahead)
+
     # Rejoin category rows that wrapped during PDF extraction. Keeping the
     # complete logical row preserves compound skills such as "API Integration"
     # and parenthesized technology lists split across physical lines.
     rebuilt_lines = []
     pending_category_line = None
     rebuilding_skill_section = False
-    for raw_line in text.splitlines():
+    for raw_index, raw_line in enumerate(text_lines):
+        if raw_index in parallel_language_rows:
+            continue
         line = raw_line.strip()
         header = _SKILL_SECTION_HEADER_RE.match(line)
         boundary = classify_section_heading(line)
@@ -1775,11 +1805,24 @@ def estimate_decision_confidence(recommendation_label, resume_text, contact_info
         concerns.append("no readable resume text was available")
 
     candidate_name = (contact_info.get("name") or "").strip().lower()
-    if candidate_name and candidate_name not in {"unknown candidate", "unknown", "n/a"}:
+    suspicious_identity = bool(
+        candidate_name
+        and (
+            classify_section_heading(candidate_name)
+            or _re.search(r"(?i)\b(?:campus|employment\s+history)\s*$", candidate_name)
+        )
+    )
+    if (
+        candidate_name
+        and candidate_name not in {"unknown candidate", "unknown", "n/a"}
+        and not suspicious_identity
+    ):
         score += 7
         strengths.append("candidate identity was detected")
     else:
         concerns.append("candidate name was not confidently detected")
+        if suspicious_identity:
+            score -= 8
 
     if contact_info.get("email") or contact_info.get("phone"):
         score += 3

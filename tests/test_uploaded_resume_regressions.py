@@ -1,5 +1,9 @@
 from app.services.education_domain import validate_experience_record
-from app.services.extractor import _select_best_pdf_text, _text_quality_score
+from app.services.extractor import (
+    _clean_extracted_text,
+    _select_best_pdf_text,
+    _text_quality_score,
+)
 from app.services.nlp_pipeline import (
     extract_contact_info,
     extract_certifications,
@@ -939,4 +943,160 @@ CHARACTER REFERENCES
             "at Work and in Everyday Life",
             "2026",
         ),
+    ]
+
+
+def test_wrapped_identity_credential_and_education_history_stay_in_their_sections():
+    text = _clean_extracted_text("""LYNDO V.
+FONTANILLA
+L I C E N S E D  P R O F E S S I O N A L
+T E A C H E R
+CONTACT INFORMATION
+glyndzfontanilla@gmail.com
+EDUCATIONAL HISTORY
+St. Anthony College and Technology
+Masters of Art in Educational Management (candidate, 36 units earned)
+Angeles University Foundation
+Bachelor of Secondary Education major in Music, Art, Physical Education and
+Health (BSEd-MAPEH)
+Ranao National High School
+Secondary Education
+Macaboboni Elementary School
+Primary Education
+INTERESTS AND HOBBIES
+PowerPoint presentation design
+""")
+
+    assert extract_contact_info(text)["name"] == "Lyndo V. Fontanilla"
+    assert extract_certifications(text)[0]["certification_name"] == "Licensed Professional Teacher"
+    assert [
+        (record["degree"], record["institution"])
+        for record in extract_education(text)
+    ] == [
+        (
+            "Masters of Art in Educational Management (candidate, 36 units earned) (Ongoing/Incomplete)",
+            "St. Anthony College and Technology",
+        ),
+        (
+            "Bachelor of Secondary Education major in Music, Art, Physical Education and Health (BSEd-MAPEH)",
+            "Angeles University Foundation",
+        ),
+        ("Secondary Education", "Ranao National High School"),
+        ("Primary Education", "Macaboboni Elementary School"),
+    ]
+
+
+def test_parallel_language_column_does_not_split_or_pollute_skills():
+    text = """QUALIFICATIONS AND SKILLS
+LANGUAGE
+- Skilled in creating and formatting documents,
+- Tagalog
+presentations, and spreadsheets using Microsoft Word,
+- English
+PowerPoint, and Excel.
+- Self-motivated and well people oriented
+PROFESSIONAL EXPERIENCE
+"""
+
+    assert extract_resume_skills(text) == [
+        "Skilled in creating and formatting documents, presentations, and spreadsheets using Microsoft Word, PowerPoint, and Excel",
+        "Self-motivated and well people oriented",
+    ]
+
+
+def test_work_and_training_heading_scopes_experience_and_ignores_award_as_employer():
+    text = """CRISTINA O. PAGUIO, LPT
+EDUCATION
+BALIUAG UNIVERSITY | Bachelor of Elementary Education
+Microsoft Excel Specialist (Excel 2019 Associate)
+Professional Certification
+Licensed Professional Teacher | PRC (March 2025)
+WORK AND TRAINING EXPERIENCE
+SAINT JOSEPH SCHOOL OF CANDABA
+Private Teacher | Full Time 2025-2026
+Most Promising Award
+Trainings and Seminars
+Classroom Management Seminar
+"""
+
+    assert extract_education(text) == [{
+        "degree": "Bachelor of Elementary Education",
+        "institution": "BALIUAG UNIVERSITY",
+    }]
+    assert extract_experience_records(text) == [{
+        "job_title": "Private Teacher",
+        "company": "SAINT JOSEPH SCHOOL OF CANDABA",
+        "location": "Not Identified",
+        "years": 1.0,
+    }]
+    assert [
+        record["certification_name"] for record in extract_certifications(text)
+    ] == ["Licensed Professional Teacher"]
+
+
+def test_ojt_tutor_phone_and_venue_date_metadata_are_reconstructed():
+    text = """HAIFA ERICA S. SAMPANG
+Contact no.: 0955-129- 0401
+EXPERIENCE
+On-The-Job Traning KUYA J RESTAURANT (270 hours)
+Kuya J branch from November 27, 2023 to January 21, 2024
+Home-Based Tutor
+(Self- Employed| [River One San Isidro, San Luis, Pampanga] | July 21, 2024- March 2026)
+SEMINAR/TRAINING ATTENDED
+Strengthening research capabilities through research trends
+Venue: Via zoom meeting administered by Bestlink College of the Philippines. Inclusive Date: September 16, 2022
+I hereby testify that the above information is true.
+SAMPANG, HAIFA ERICA S.
+Applicant's Signature
+"""
+
+    assert extract_contact_info(text)["phone"] == "0955-129- 0401"
+    assert [
+        (record["job_title"], record["company"])
+        for record in extract_experience_records(text)
+    ] == [
+        ("On-the-Job Training", "KUYA J RESTAURANT"),
+        ("Home-Based Tutor", "Self-Employed"),
+    ]
+    trainings = extract_certifications(text)
+    assert trainings == [{
+        "certification_name": "Strengthening research capabilities through research trends",
+        "credential_type": "Training",
+        "issuer": "Via zoom meeting administered by Bestlink College of the Philippines",
+        "date_obtained": "September 16, 2022",
+    }]
+
+
+def test_reference_name_label_cannot_override_header_applicant_name():
+    text = """Canasa Camille S.
+Email Address: canasacams8@gmail.com
+CHARACTER REFERENCE
+Name: Vivian D. Dela Victoria
+Position: Master Teacher 1
+Name: Queenie Mahree D. Sabangan
+Position: Teacher 1
+Camille S. Canasa
+Applicant's Signature
+"""
+
+    assert extract_contact_info(text)["name"] == "Camille S. Canasa"
+    assert extract_experience_records(text) == []
+
+
+def test_consecutive_promotions_reuse_only_the_explicit_nearby_employer():
+    text = """EXPERIENCE
+VILLARICA PAWNSHOP
+Branch Associate
+December 9, 2025 to March 1, 2026
+Cashier (Promoted)
+March 2, 2026 to April 2, 2026
+REFERENCES
+"""
+
+    assert [
+        (record["job_title"], record["company"])
+        for record in extract_experience_records(text)
+    ] == [
+        ("Branch Associate", "VILLARICA PAWNSHOP"),
+        ("Cashier (Promoted)", "VILLARICA PAWNSHOP"),
     ]

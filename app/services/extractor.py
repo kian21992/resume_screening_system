@@ -7,14 +7,39 @@ logger = logging.getLogger(__name__)
 
 
 _SECTION_HEADING_RE = re.compile(
-    r"(?im)^\s*(?:professional\s+summary|summary|profile|about\s+me|education|"
-    r"(?:professional|work(?:ing)?|teaching|employment)\s+experience|experience|"
-    r"technical\s+skills|skills(?:\s*(?:&|and)\s*qualities)?|"
+    r"(?im)^\s*(?:professional\s+summary|summary|profile|about\s+me|career\s+objectives?|"
+    r"education(?:al)?(?:\s+(?:background|history|attainment))?|"
+    r"(?:professional|work(?:ing)?|teaching|employment)\s+experience|experience(?:/s)?|"
+    r"work\s+(?:and|&)\s+training\s+experience|technical\s+skills|"
+    r"qualifications?\s+(?:and|&)\s+skills|skills(?:\s*(?:&|and)\s+qualities)?|"
     r"certifications?|certificates?|licenses?|projects?|contact|"
     r"trainings?|seminars?|trainings?\s*(?:&|and|/)\s*seminars?|"
     r"seminars?\s*(?:&|and|/)\s*trainings?|character\s+references?|"
-    r"personal\s+(?:information|data)|scholastic\s+records?)\s*:?[ \t]*$"
+    r"references?|personal\s+(?:information|data|profile)|scholastic\s+records?|"
+    r"achievements?|awards?|languages?|interests?\s+(?:and|&)\s+hobbies)\s*:?[ \t]*$"
 )
+
+
+_POSITIONED_HEADING_KEYS = {
+    'ACHIEVEMENTS', 'AWARDS', 'CAREEROBJECTIVE', 'CAREEROBJECTIVES',
+    'CHARACTERREFERENCE', 'CHARACTERREFERENCES', 'CONTACT',
+    'CONTACTINFORMATION', 'EDUCATION', 'EDUCATIONALATTAINMENT',
+    'EDUCATIONALBACKGROUND', 'EDUCATIONALHISTORY', 'EMPLOYMENTHISTORY',
+    'EXPERIENCE', 'EXPERIENCES', 'INTERESTSANDHOBBIES', 'LANGUAGE',
+    'LANGUAGES', 'PERSONALINFORMATION', 'PERSONALPROFILE',
+    'PROFESSIONALEXPERIENCE', 'QUALIFICATIONSANDSKILLS', 'REFERENCE',
+    'REFERENCES', 'SEMINAR', 'SEMINARS', 'SKILL', 'SKILLS', 'TRAINING',
+    'TRAININGS', 'WORKANDTRAININGEXPERIENCE', 'WORKEXPERIENCE',
+}
+
+
+def _heading_key(value):
+    """Return a punctuation/spacing-insensitive key for known headings."""
+    return re.sub(r'[^A-Za-z]', '', value or '').upper()
+
+
+def _looks_like_positioned_heading(value):
+    return _heading_key(value) in _POSITIONED_HEADING_KEYS
 
 
 def _text_quality_score(text):
@@ -80,6 +105,41 @@ def _text_quality_score(text):
         else:
             current_heading_run = 0
     orphaned_heading_run = max(0, early_heading_run - 1)
+    first_heading_index = next(
+        (index for index, line in enumerate(lines) if _SECTION_HEADING_RE.fullmatch(line)),
+        None,
+    )
+    contact_near_top = any(
+        re.search(r'[\w.+-]+@[\w.-]+\.\w{2,}|(?:\+?\d[\d ()-]{7,}\d)', line)
+        for line in lines[:12]
+    )
+    late_first_heading = (
+        max(0, first_heading_index - 16)
+        if contact_near_top and first_heading_index is not None else 0
+    )
+    standalone_punctuation_lines = sum(
+        bool(re.fullmatch(r'[:|/.-]+', line)) for line in lines
+    )
+    # PyPDF2 occasionally inserts a space before the final glyph of common
+    # resume words.  A coordinate extraction without these artifacts is safer
+    # when the overall quality scores are otherwise nearly tied.
+    split_word_artifacts = len(re.findall(
+        r'(?i)\b(?:experienc\s+e|teache\s+r|advise\s+r|technolog\s+y|'
+        r'accountanc\s+y|performa\s+nce|managemen\s+t|educatio\s+n)\b',
+        cleaned,
+    ))
+    longest_one_word_run = 0
+    one_word_run = 0
+    for line in lines:
+        if len(re.findall(r"[A-Za-z][A-Za-z'\-]*", line)) == 1:
+            one_word_run += 1
+            longest_one_word_run = max(longest_one_word_run, one_word_run)
+        else:
+            one_word_run = 0
+    # A long uninterrupted run is a stronger defect than the overall ratio:
+    # legitimate skill lists may contain many one-word items, but normally
+    # not 8+ fragments from a single sentence.
+    fragmented_sentence_run = max(0, longest_one_word_run - 6)
 
     return (
         min(len(words), 1200) * 0.035
@@ -95,6 +155,10 @@ def _text_quality_score(text):
         - trailing_orphaned_heading * 8
         - orphaned_heading_run * 5
         - word_line_fragmentation
+        - min(late_first_heading, 30) * 0.8
+        - max(0, standalone_punctuation_lines - 2) * 1.5
+        - split_word_artifacts * 2
+        - fragmented_sentence_run * 1.25
     )
 
 
@@ -112,8 +176,8 @@ def _select_best_pdf_text(candidates):
     return text, method
 
 
-def _words_to_lines(words, y_tolerance=3):
-    """Rebuild readable lines from positioned PDF words."""
+def _words_to_rows(words, y_tolerance=3):
+    """Group positioned PDF words into visual rows."""
     rows = []
     for word in sorted(words, key=lambda item: (item['top'], item['x0'])):
         row = next(
@@ -126,20 +190,184 @@ def _words_to_lines(words, y_tolerance=3):
             rows.append(row)
         row['words'].append(word)
 
+    return sorted(rows, key=lambda item: item['top'])
+
+
+def _row_to_line(words):
+    ordered = sorted(words, key=lambda item: item['x0'])
+    parts = []
+    previous_x1 = None
+    for word in ordered:
+        if previous_x1 is not None:
+            parts.append('  ' if word['x0'] - previous_x1 >= 12 else ' ')
+        parts.append(word['text'])
+        previous_x1 = word['x1']
+    return ''.join(parts).strip()
+
+
+def _words_to_lines(words, y_tolerance=3):
+    """Rebuild readable lines from positioned PDF words."""
+    rows = _words_to_rows(words, y_tolerance=y_tolerance)
+
     lines = []
-    for row in sorted(rows, key=lambda item: item['top']):
-        ordered = sorted(row['words'], key=lambda item: item['x0'])
-        parts = []
-        previous_x1 = None
-        for word in ordered:
-            if previous_x1 is not None:
-                parts.append('  ' if word['x0'] - previous_x1 >= 12 else ' ')
-            parts.append(word['text'])
-            previous_x1 = word['x1']
-        line = ''.join(parts).strip()
+    for row in rows:
+        line = _row_to_line(row['words'])
         if line:
             lines.append(line)
     return lines
+
+
+def _find_paired_heading_split(words, page_width):
+    """Find a split supported by two independent headings on the same row.
+
+    This is intentionally stricter than a whitespace-only gutter.  It enables
+    mixed-layout pages (full-width header, two-column middle, full-width body)
+    without turning ordinary label/value tables into columns.
+    """
+    if len(words) < 45 or page_width <= 0:
+        return None
+
+    rows = _words_to_rows(words)
+    best = None
+    step = max(4.0, page_width * 0.012)
+    split = page_width * 0.34
+    while split <= page_width * 0.66:
+        left_count = sum((word['x0'] + word['x1']) / 2 < split for word in words)
+        right_count = len(words) - left_count
+        if min(left_count, right_count) < 18:
+            split += step
+            continue
+
+        left_heading_rows = []
+        right_heading_rows = []
+        paired_rows = []
+        heading_gaps = []
+        for index, row in enumerate(rows):
+            left = [word for word in row['words'] if (word['x0'] + word['x1']) / 2 < split]
+            right = [word for word in row['words'] if (word['x0'] + word['x1']) / 2 >= split]
+            left_text = _row_to_line(left)
+            right_text = _row_to_line(right)
+            left_heading = _looks_like_positioned_heading(left_text)
+            right_heading = _looks_like_positioned_heading(right_text)
+            if left_heading:
+                left_heading_rows.append((index, row['top'], left))
+            if right_heading:
+                right_heading_rows.append((index, row['top'], right))
+            if left_heading and right_heading:
+                paired_rows.append(index)
+                heading_gaps.append((max(word['x1'] for word in left), min(word['x0'] for word in right)))
+
+        # Template columns often place their colored heading boxes a few
+        # points above/below one another. Treat nearby opposing headings as a
+        # pair, but require multiple such pairs when they are not on one row.
+        adjacent_pairs = []
+        for left_index, left_top, left_words in left_heading_rows:
+            nearest = min(
+                right_heading_rows,
+                key=lambda item: abs(item[1] - left_top),
+                default=None,
+            )
+            if nearest and abs(nearest[1] - left_top) <= 24:
+                right_index, _right_top, right_words = nearest
+                adjacent_pairs.append((left_index, right_index))
+                heading_gaps.append((
+                    max(word['x1'] for word in left_words),
+                    min(word['x0'] for word in right_words),
+                ))
+
+        if not paired_rows and len(adjacent_pairs) < 2:
+            split += step
+            continue
+        paired_rows.extend(index for pair in adjacent_pairs for index in pair)
+        paired_rows = sorted(set(paired_rows))
+
+        if paired_rows:
+            balance = min(left_count, right_count) / max(left_count, right_count)
+            valid_gaps = [
+                (left_edge, right_edge)
+                for left_edge, right_edge in heading_gaps
+                if right_edge - left_edge >= 12
+            ]
+            if not valid_gaps:
+                split += step
+                continue
+            gap_midpoints = sorted((left + right) / 2 for left, right in valid_gaps)
+            derived_split = gap_midpoints[len(gap_midpoints) // 2]
+            candidate = (
+                len(paired_rows), balance, -abs(derived_split - page_width / 2),
+                derived_split, paired_rows,
+            )
+            if best is None or candidate[:3] > best[:3]:
+                best = candidate
+        split += step
+    return (best[3], best[4]) if best else None
+
+
+def _extract_mixed_page_regions(words, page_width):
+    """Read only the proven two-column region column-by-column."""
+    detected = _find_paired_heading_split(words, page_width)
+    if not detected:
+        return None
+    split_x, paired_rows = detected
+    rows = _words_to_rows(words)
+    start_index = min(paired_rows)
+    end_index = len(rows)
+
+    # Once the first paired headings establish where the mixed column region
+    # begins, whitespace in that region is better evidence for the actual
+    # boundary than heading widths (a short ``SKILLS`` heading may end far
+    # before the rest of its column). This also avoids cutting off words near
+    # the inner edge of an uneven pair of columns.
+    preliminary_region = [
+        word for row in rows[start_index:] for word in row['words']
+    ]
+    regional_gutter = _find_column_gutter(preliminary_region, page_width)
+    if regional_gutter:
+        split_x = sum(regional_gutter) / 2
+
+    def fragments(row):
+        left = [word for word in row['words'] if (word['x0'] + word['x1']) / 2 < split_x]
+        right = [word for word in row['words'] if (word['x0'] + word['x1']) / 2 >= split_x]
+        return left, right
+
+    # A later single heading followed by continuous full-width prose closes the
+    # column region.  Independent content on both sides keeps the region open.
+    for index in range(start_index + 2, len(rows)):
+        left, right = fragments(rows[index])
+        left_text, right_text = _row_to_line(left), _row_to_line(right)
+        single_heading = (
+            (_looks_like_positioned_heading(left_text) and not right_text)
+            or (_looks_like_positioned_heading(right_text) and not left_text)
+        )
+        if not single_heading:
+            continue
+        continuous_rows = 0
+        independent_rows = 0
+        for future in rows[index + 1:index + 9]:
+            future_left, future_right = fragments(future)
+            if not future_left or not future_right:
+                continue
+            gap = min(word['x0'] for word in future_right) - max(word['x1'] for word in future_left)
+            if gap >= 10:
+                independent_rows += 1
+            else:
+                continuous_rows += 1
+        if continuous_rows >= 2 and continuous_rows > independent_rows:
+            end_index = index
+            break
+
+    before_words = [word for row in rows[:start_index] for word in row['words']]
+    region_words = [word for row in rows[start_index:end_index] for word in row['words']]
+    after_words = [word for row in rows[end_index:] for word in row['words']]
+    left_region = [word for word in region_words if (word['x0'] + word['x1']) / 2 < split_x]
+    right_region = [word for word in region_words if (word['x0'] + word['x1']) / 2 >= split_x]
+
+    parts = []
+    for group in (before_words, left_region, right_region, after_words):
+        group_text = '\n'.join(_words_to_lines(group))
+        if group_text.strip():
+            parts.append(group_text)
+    return '\n'.join(parts) if parts else None
 
 
 def _find_column_gutter(words, page_width):
@@ -220,7 +448,7 @@ def _extract_page_columns(page):
     words = page.extract_words(x_tolerance=1, y_tolerance=3, keep_blank_chars=False)
     gutter = _find_column_gutter(words, page.width)
     if not gutter:
-        return None
+        return _extract_mixed_page_regions(words, page.width)
 
     left_edge, right_edge = gutter
     split_x = (left_edge + right_edge) / 2
@@ -232,6 +460,24 @@ def _extract_page_columns(page):
     ]
     columns = [column for column in columns if column]
     columns.sort(key=lambda column: min(word['top'] for word in column))
+
+    # A portrait can delay the first text in an identity sidebar, causing a
+    # body section on the right to be read before the applicant's name.  Change
+    # the established ordering only when the left side contains contact
+    # evidence and the earlier right side begins with an actual section.
+    if len(columns) == 2:
+        physical_left, physical_right = sorted(
+            columns, key=lambda column: min(word['x0'] for word in column)
+        )
+        left_text = '\n'.join(_words_to_lines(physical_left))
+        right_lines = _words_to_lines(physical_right)
+        right_first = right_lines[0] if right_lines else ''
+        left_has_contact = bool(re.search(
+            r'[\w.+-]+@[\w.-]+\.\w{2,}|(?:\+?\d[\d ()-]{7,}\d)',
+            left_text,
+        ))
+        if left_has_contact and _looks_like_positioned_heading(right_first):
+            columns = [physical_left, physical_right]
     return '\n'.join(
         line
         for column in columns
@@ -554,32 +800,98 @@ def _clean_extracted_text(text):
         ``W O R K  E X P E R I E N C E``. Only known headings are rewritten,
         avoiding unsafe guesses about spacing in letter-spaced names.
         """
-        tokens = line.strip().split()
-        if len(tokens) < 4:
-            return line.strip()
-        glyph_share = sum(
-            len(re.sub(r'[^A-Za-z]', '', token)) <= 1 for token in tokens
-        ) / len(tokens)
-        if glyph_share < 0.75:
-            return line.strip()
-        compact = re.sub(r'[^A-Za-z&]', '', line).upper()
+        raw = line.strip()
+        tokens = raw.split()
+        compact = _heading_key(raw)
         headings = {
-            'PROFESSIONALPROFILE': 'PROFESSIONAL PROFILE',
+            'ACHIEVEMENTS': 'ACHIEVEMENTS',
+            'CAREEROBJECTIVE': 'CAREER OBJECTIVE',
+            'CAREEROBJECTIVES': 'CAREER OBJECTIVE',
+            'CHARACTERREFERENCE': 'CHARACTER REFERENCE',
+            'CHARACTERREFERENCES': 'CHARACTER REFERENCES',
             'CONTACT': 'CONTACT',
+            'CONTACTINFORMATION': 'CONTACT INFORMATION',
             'EDUCATION': 'EDUCATION',
-            'SKILLS': 'SKILLS',
+            'EDUCATIONALATTAINMENT': 'EDUCATIONAL ATTAINMENT',
+            'EDUCATIONALBACKGROUND': 'EDUCATIONAL BACKGROUND',
+            'EDUCATIONALHISTORY': 'EDUCATIONAL HISTORY',
+            'EMPLOYMENTHISTORY': 'EMPLOYMENT HISTORY',
+            'EXPERIENCES': 'EXPERIENCE',
+            'INTERESTSANDHOBBIES': 'INTERESTS AND HOBBIES',
             'LANGUAGE': 'LANGUAGE',
             'LANGUAGES': 'LANGUAGES',
-            'WORKEXPERIENCE': 'WORK EXPERIENCE',
+            'LICENSEDPROFESSIONALTEACHER': 'LICENSED PROFESSIONAL TEACHER',
             'PERSONALINFORMATION': 'PERSONAL INFORMATION',
-            'CHARACTERREFERENCES': 'CHARACTER REFERENCES',
-            'PUBLICATIONS&PRESENTATIONS': 'PUBLICATIONS & PRESENTATIONS',
-            'PROFESSIONAL&CIVICAFFILIATION': 'PROFESSIONAL & CIVIC AFFILIATION',
-            'LICENSES&CERTIFICATIONS': 'LICENSES & CERTIFICATIONS',
+            'PERSONALPROFILE': 'PERSONAL PROFILE',
+            'PROFESSIONALCIVICAFFILIATION': 'PROFESSIONAL & CIVIC AFFILIATION',
+            'PROFESSIONALPROFILE': 'PROFESSIONAL PROFILE',
+            'PROFESSIONALEXPERIENCE': 'PROFESSIONAL EXPERIENCE',
+            'PUBLICATIONSPRESENTATIONS': 'PUBLICATIONS & PRESENTATIONS',
+            'QUALIFICATIONSANDSKILLS': 'QUALIFICATIONS AND SKILLS',
+            'REFERENCE': 'REFERENCE',
+            'REFERENCES': 'REFERENCES',
+            'SEMINAR': 'SEMINAR',
+            'SEMINARS': 'SEMINARS',
+            'SKILLS': 'SKILLS',
+            'TRAINING': 'TRAINING',
+            'TRAININGS': 'TRAININGS',
+            'WORKANDTRAININGEXPERIENCE': 'WORK AND TRAINING EXPERIENCE',
+            'WORKEXPERIENCE': 'WORK EXPERIENCE',
+            'LICENSESCERTIFICATIONS': 'LICENSES & CERTIFICATIONS',
         }
-        return headings.get(compact, line.strip())
+        glyph_share = sum(
+            len(re.sub(r'[^A-Za-z]', '', token)) <= 1 for token in tokens
+        ) / len(tokens) if tokens else 0
+        decorative_spacing = len(tokens) >= 4 and glyph_share >= 0.75
+        internal_split_keys = {
+            'CONTACTINFORMATION',
+            'EDUCATIONALATTAINMENT',
+            'PERSONALINFORMATION',
+        }
+        internal_word_split = bool(
+            compact in headings
+            and compact in internal_split_keys
+            and len(tokens) >= 2
+            and any(
+                len(re.sub(r'[^A-Za-z]', '', token)) == 1
+                for token in tokens
+            )
+            and raw.upper() == raw
+        )
+        # Repair letter-spaced headings and short internal word splits such as
+        # ``PERSONAL I NFORMATION``. Ordinary headings retain their original
+        # spelling, case, and punctuation for backward-compatible text.
+        if compact in headings and (decorative_spacing or internal_word_split):
+            return headings[compact]
+        return raw
 
     cleaned_lines = [normalize_decorative_heading(line) for line in text.splitlines()]
+
+    # A narrow sidebar can wrap a letter-spaced professional credential over
+    # several physical rows. Join only this exact known phrase; arbitrary line
+    # joining could change valid names or section content.
+    credential_key = 'LICENSEDPROFESSIONALTEACHER'
+    joined_lines = []
+    index = 0
+    while index < len(cleaned_lines):
+        compact = _heading_key(cleaned_lines[index])
+        matched_end = None
+        if compact and credential_key.startswith(compact):
+            combined = compact
+            for end in range(index + 1, min(index + 4, len(cleaned_lines))):
+                combined += _heading_key(cleaned_lines[end])
+                if combined == credential_key:
+                    matched_end = end
+                    break
+                if not credential_key.startswith(combined):
+                    break
+        if matched_end is not None:
+            joined_lines.append('LICENSED PROFESSIONAL TEACHER')
+            index = matched_end + 1
+            continue
+        joined_lines.append(cleaned_lines[index])
+        index += 1
+    cleaned_lines = joined_lines
 
     # Layered PDF text and duplicated DOCX table content can emit the same
     # line multiple times in succession. Remove only adjacent normalized

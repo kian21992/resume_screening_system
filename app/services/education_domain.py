@@ -36,6 +36,7 @@ SECTION_ALIASES = {
     "skills": (
         r"skills?", r"technical skills?", r"core competencies", r"competencies",
         r"areas? of expertise", r"teaching competencies", r"professional skills?",
+        r"qualifications? (?:and|&) skills?", r"skills? (?:and|&) abilities",
         r"comp[eé]tences(?: techniques| informatiques| transversales)?",
     ),
     "experience": (
@@ -45,6 +46,7 @@ SECTION_ALIASES = {
         r"teaching experience", r"teaching experiences", r"faculty experience",
         r"academic experience", r"education experience", r"career history",
         r"professional background", r"work[- ]related experience", r"positions? held",
+        r"work (?:and|&) training experience",
         r"exp[eé]riences? professionnelles?", r"exp[eé]rience professionnelle",
     ),
     "education": (
@@ -84,6 +86,7 @@ SECTION_ALIASES = {
         r"contact", r"contact information",
     ),
     "affiliations": (r"affiliations?", r"organizations?", r"activities"),
+    "interests": (r"interests?", r"hobbies", r"interests? (?:and|&) hobbies"),
 }
 
 _SECTION_PATTERNS = {
@@ -146,6 +149,17 @@ def classify_combined_heading(line):
     raw = _BULLET_RE.sub("", line or "").strip()
     raw = re.sub(r"^[A-Z]\s*[.)-]\s*", "", raw, flags=re.I)
     raw = raw.split(":", 1)[0]
+    # A few established combined headings have a domain meaning that cannot
+    # be inferred by classifying each word around ``and``/``&`` separately.
+    # Keep this list narrow so legacy phrases such as ``Scholarships and
+    # Honors Received`` retain their established section behavior.
+    normalized_raw = normalize_heading(raw)
+    if re.fullmatch(r"qualifications? (?:and|&) skills?|skills? (?:and|&) abilities", normalized_raw, re.I):
+        return ["skills"]
+    if re.fullmatch(r"work (?:and|&) training experience", normalized_raw, re.I):
+        return ["experience"]
+    if re.fullmatch(r"interests? (?:and|&) hobbies", normalized_raw, re.I):
+        return ["interests"]
     parts = [part.strip() for part in re.split(r"\s*(?:,|&|/|\band\b)\s*", raw, flags=re.I) if part.strip()]
     classified = []
     unmatched = False
