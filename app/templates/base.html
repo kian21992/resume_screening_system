@@ -48,6 +48,9 @@
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint and request.endpoint.startswith('screening.') %}active{% endif %}" href="{{ url_for('screening.screening_results') }}" {% if request.endpoint and request.endpoint.startswith('screening.') %}aria-current="page"{% endif %}>Candidates</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint and request.endpoint.startswith('summary.') %}active{% endif %}" href="{{ url_for('summary.executive_summary') }}" {% if request.endpoint and request.endpoint.startswith('summary.') %}aria-current="page"{% endif %}>Executive Summary</a>
+                    </li>
                 </ul>
                 <div class="d-flex">
                     <span class="navbar-text me-3">

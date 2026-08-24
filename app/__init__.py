@@ -138,6 +138,7 @@ def create_app(config_class=Config):
         from app.routes.resume_routes import resume_bp
         from app.routes.job_routes import job_bp
         from app.routes.screening_routes import screening_bp
+        from app.routes.summary_routes import summary_bp
 
         # Register blueprints
         app.register_blueprint(auth_bp)
@@ -145,6 +146,7 @@ def create_app(config_class=Config):
         app.register_blueprint(resume_bp)
         app.register_blueprint(job_bp)
         app.register_blueprint(screening_bp)
+        app.register_blueprint(summary_bp)
 
         # Create all database tables
         db.create_all()

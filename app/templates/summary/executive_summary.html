@@ -1,0 +1,231 @@
+{% extends 'base.html' %}
+{% block title %}Executive Summary{% endblock %}
+
+{% block content %}
+<div class="page-toolbar">
+    <h1 class="mb-0">Executive Summary</h1>
+    <div class="toolbar-actions">
+        {% if months %}
+        <form method="GET" action="{{ url_for('summary.executive_summary') }}" class="d-flex align-items-center gap-2">
+            <label for="month" class="text-muted small mb-0">Month</label>
+            <select id="month" name="month" class="form-select form-select-sm" onchange="this.form.submit()">
+                {% for m in months %}
+                <option value="{{ m.key }}" {% if m.key == selected_month %}selected{% endif %}>{{ m.label }}</option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit" class="btn btn-sm btn-primary">Go</button></noscript>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if not months %}
+<div class="glass-panel p-5 text-center">
+    <i class="bi bi-bar-chart-line text-muted" style="font-size:2.5rem;"></i>
+    <h4 class="mt-3 fw-bold">No data yet</h4>
+    <p class="text-muted mb-4">
+        Once resumes are uploaded and screened against a job, this page will show how many
+        applicants each position received per month.
+    </p>
+    <a href="{{ url_for('resume.upload') }}" class="btn btn-primary">
+        <i class="bi bi-cloud-arrow-up-fill"></i> Upload Resumes
+    </a>
+</div>
+{% else %}
+
+<!-- ===== Top stat cards ===== -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="glass-panel dashboard-card p-4">
+            <h6 class="text-muted text-uppercase fw-bold small mb-2">Applicants this month</h6>
+            <h2 class="display-6 fw-bold mb-0">{{ current.total_applicants }}</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="glass-panel dashboard-card p-4">
+            <h6 class="text-muted text-uppercase fw-bold small mb-2">Resumes screened</h6>
+            <h2 class="display-6 fw-bold mb-0">{{ current.total_screened }}</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="glass-panel dashboard-card p-4">
+            <h6 class="text-muted text-uppercase fw-bold small mb-2">Qualified</h6>
+            <h2 class="display-6 fw-bold mb-0">{{ current.total_qualified }}</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="glass-panel dashboard-card p-4">
+            <h6 class="text-muted text-uppercase fw-bold small mb-2">Most applied position</h6>
+            {% if current.top_job %}
+            <h5 class="fw-bold mb-1">{{ current.top_job.job_title }}</h5>
+            <span class="text-muted small">{{ current.top_job.applicants }} applicant(s)</span>
+            {% else %}
+            <h5 class="fw-bold mb-0 text-muted">—</h5>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===== Charts ===== -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-7">
+        <div class="glass-panel p-4 h-100 shadow-sm">
+            <h4 class="mb-1 fw-bold">Applicants per position</h4>
+            <p class="text-muted small mb-4">{{ current.label }} — ranked most to least applied</p>
+            <div style="position: relative; height: 300px;">
+                <canvas id="jobsChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="glass-panel p-4 h-100 shadow-sm">
+            <h4 class="mb-1 fw-bold">Monthly trend</h4>
+            <p class="text-muted small mb-4">Total applicants received per month</p>
+            <div style="position: relative; height: 300px;">
+                <canvas id="trendChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== Ranking table ===== -->
+<div class="glass-panel p-4 shadow-sm">
+    <h4 class="mb-1 fw-bold">Position breakdown — {{ current.label }}</h4>
+    <p class="text-muted small mb-4">
+        Applicant counts are based on resumes uploaded for each job during this month.
+    </p>
+
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th style="width:60px;">Rank</th>
+                    <th>Position</th>
+                    <th class="text-center">Applicants</th>
+                    <th class="text-center">Screened</th>
+                    <th class="text-center">Qualified</th>
+                    <th class="text-center">Qualified rate</th>
+                    <th class="text-center">Avg. fit score</th>
+                    <th style="width:160px;">Share</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in current.rows %}
+                <tr>
+                    <td class="fw-bold text-muted">{{ loop.index }}</td>
+                    <td>
+                        {% if row.job_exists %}
+                        <a href="{{ url_for('job.view_job', job_id=row.job_id) }}" class="fw-semibold text-decoration-none">
+                            {{ row.job_title }}
+                        </a>
+                        {% else %}
+                        <span class="fw-semibold text-muted">{{ row.job_title }}</span>
+                        <span class="badge bg-secondary ms-1">removed</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center fw-bold">{{ row.applicants }}</td>
+                    <td class="text-center">{{ row.screened }}</td>
+                    <td class="text-center">{{ row.qualified }}</td>
+                    <td class="text-center">
+                        {% if row.qualified_rate is not none %}{{ row.qualified_rate }}%{% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td class="text-center">
+                        {% if row.avg_fit_score is not none %}{{ row.avg_fit_score }}{% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="progress flex-grow-1" style="height:8px;">
+                                <div class="progress-bar" role="progressbar"
+                                     style="width: {{ row.share }}%;"
+                                     aria-valuenow="{{ row.share }}" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                            <span class="text-muted small" style="min-width:44px;">{{ row.share }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if months %}
+<script id="summary-data" type="application/json">
+    {{ {
+        'labels': current.rows | map(attribute='job_title') | list,
+        'applicants': current.rows | map(attribute='applicants') | list,
+        'screened': current.rows | map(attribute='screened') | list,
+        'trendLabels': trend | map(attribute='label') | list,
+        'trendValues': trend | map(attribute='total') | list
+    } | tojson }}
+</script>
+<script>
+(function () {
+    var payload = JSON.parse(document.getElementById('summary-data').textContent);
+
+    var jobsCanvas = document.getElementById('jobsChart');
+    if (jobsCanvas && payload.labels.length) {
+        new Chart(jobsCanvas, {
+            type: 'bar',
+            data: {
+                labels: payload.labels,
+                datasets: [
+                    {
+                        label: 'Applicants',
+                        data: payload.applicants,
+                        backgroundColor: '#5B9BD5',
+                        borderRadius: 4
+                    },
+                    {
+                        label: 'Screened',
+                        data: payload.screened,
+                        backgroundColor: '#1F4E79',
+                        borderRadius: 4
+                    }
+                ]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { beginAtZero: true, ticks: { precision: 0 } }
+                },
+                plugins: { legend: { position: 'bottom' } }
+            }
+        });
+    }
+
+    var trendCanvas = document.getElementById('trendChart');
+    if (trendCanvas && payload.trendLabels.length) {
+        new Chart(trendCanvas, {
+            type: 'line',
+            data: {
+                labels: payload.trendLabels,
+                datasets: [{
+                    label: 'Applicants',
+                    data: payload.trendValues,
+                    borderColor: '#2E75B6',
+                    backgroundColor: 'rgba(46,117,182,0.15)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0 } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+})();
+</script>
+{% endif %}
+{% endblock %}
