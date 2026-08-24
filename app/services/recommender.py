@@ -216,6 +216,12 @@ _NON_SKILL_SECTION_RE = _re.compile(
     r"(?:\s*:\s*.*)?\s*$",
     _re.IGNORECASE,
 )
+_CONTACT_DETAIL_IN_SKILL_ROW_RE = _re.compile(
+    r"(?:\b(?:address|residence)\s*:"
+    r"|\b(?:purok|barangay|brgy\.?|sitio|subdivision)\b"
+    r"|\b(?:block|blk|lot)\s*(?:no\.?|#)?\s*\d)",
+    _re.IGNORECASE,
+)
 _SKILL_CATEGORY_RE = _re.compile(
     r"^(?:programming\s+languages?|languages?|frameworks?|libraries|databases?"
     r"|frameworks?\s*(?:&|and|/)\s*libraries"
@@ -579,6 +585,12 @@ def _skill_section_items(line):
     if not line:
         return []
 
+    # Layout-table resumes may place a contact/sidebar cell immediately after
+    # a terminal Skills block. Reject the intact contact row before comma
+    # splitting can turn an address into several plausible-looking skills.
+    if _CONTACT_DETAIL_IN_SKILL_ROW_RE.search(line):
+        return []
+
     # Remove a wide first column only when it is a recognized category. A
     # generic rule would lose real skills in rows such as "Python    Docker".
     wide_columns = [part.strip() for part in _re.split(r"\t+|\s{2,}", line) if part.strip()]
@@ -608,6 +620,13 @@ def _skill_section_items(line):
         line = _SKILL_CATEGORY_PREFIX_RE.sub("", line, count=1).strip()
     if not line or _SKILL_CATEGORY_RE.fullmatch(line):
         return []
+
+    # A comma before "as well as" joins two parts of one competency sentence;
+    # it is not a list delimiter. Keeping the row intact prevents a fragment
+    # such as "as well as independently" from becoming a separate skill.
+    if _re.search(r",\s+as\s+well\s+as\b", line, _re.IGNORECASE):
+        normalized = _re.sub(r"\s+", " ", line).strip()
+        return [normalized] if _valid_section_skill(normalized) else []
 
     # Some visually separated PDF columns are flattened onto one line. Resume
     # competency sentences commonly reveal the lost boundary through a new

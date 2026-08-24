@@ -839,3 +839,104 @@ Microsoft Word
     assert [
         record["certification_name"] for record in extract_certifications(text)
     ] == ["ENHANCEMENT OF TEACHING STRATEGIES"]
+
+
+def test_pdf_selector_rejects_orphaned_heading_run_before_resume_content():
+    coordinate_order = """CHRISTINE JOY CASTRO ANGELES
+Address: #48 Purok 3, Baliti City of San Fernando Pampanga
+Phone: 0999-555-8584
+Email: christinejoyangeles17@gmail.com
+PROFILE
+Financial Management graduate seeking an entry-level role.
+WORK EXPERIENCE
+Accounting Staff, Our Lady of Fatima University Inc. June 29, 2016 - Present
+Maintain financial documents and prepare billing invoices.
+TRAININGS AND SEMINARS
+Know your Money November 2025
+Customer Service Training 2026 Enhancing the Culture of Excellent Service
+Customer Service Training 2026 Module II
+Going the Extra Mile: Giving Your Best at Work and in Everyday Life
+EDUCATION
+Bachelor of Science Business and Administration 2012 - 2016
+Major in Financial Management
+Colegio de Sebastian
+SKILLS
+Exceptional communication skills
+Successful working in a team environment, as well as independently.
+Microsoft Office Suite
+PERSONAL INFORMATION
+Name:
+Angeles, Christine Joy C.
+Civil Status: Single
+CHARACTER REFERENCES
+"""
+    content_stream_order = """TRAININGS AND SEMINARS
+EDUCATION
+WORK EXPERIENCE
+PROFILE
+Know your Money November 2025
+2012 - 2016
+Bachelor of Science Business and Administration
+Major in Financial Management
+Colegio de Sebastian
+June 29, 2016 - Present
+Accounting Staff, Our Lady of Fatima University Inc.Maintain financial documents.
+Financial Management graduate seeking an entry-level role.
+CHRISTINE JOY CASTRO ANGELES
+Address:
+Phone:
+Email:
+#48 Purok 3, Baliti City of San Fernando Pampanga
+0999-555-8584
+christinejoyangeles17@gmail.com
+SKILLS
+Exceptional communication skills
+Microsoft Office Suite
+PERSONAL INFORMATION
+Civil Status: Single
+CHARACTER REFERENCES
+"""
+
+    selected, method = _select_best_pdf_text([
+        ("pdfplumber", coordinate_order),
+        ("PyPDF2", content_stream_order),
+    ])
+
+    assert method == "pdfplumber"
+    assert selected == coordinate_order
+    assert extract_contact_info(selected) == {
+        "name": "Christine Joy Castro Angeles",
+        "email": "christinejoyangeles17@gmail.com",
+        "phone": "0999-555-8584",
+    }
+    assert extract_education(selected) == [{
+        "degree": (
+            "Bachelor of Science Business and Administration, "
+            "Major in Financial Management"
+        ),
+        "institution": "Colegio de Sebastian",
+    }]
+    assert [
+        (record["job_title"], record["company"])
+        for record in extract_experience_records(selected)
+    ] == [("Accounting Staff", "Our Lady of Fatima University Inc")]
+    assert extract_resume_skills(selected) == [
+        "Exceptional communication skills",
+        "Successful working in a team environment, as well as independently",
+        "Microsoft Office Suite",
+    ]
+    assert [
+        (record["certification_name"], record["date_obtained"])
+        for record in extract_certifications(selected)
+    ] == [
+        ("Know your Money", "November 2025"),
+        (
+            "Customer Service Training Enhancing the Culture of Excellent Service",
+            "2026",
+        ),
+        (
+            "Customer Service Training Module II Going the Extra Mile: Giving Your Best "
+            "at Work and in Everyday Life",
+            "2026",
+        ),
+    ]

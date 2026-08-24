@@ -7,10 +7,12 @@ logger = logging.getLogger(__name__)
 
 
 _SECTION_HEADING_RE = re.compile(
-    r"(?im)^\s*(?:professional\s+summary|summary|profile|education|"
+    r"(?im)^\s*(?:professional\s+summary|summary|profile|about\s+me|education|"
     r"(?:professional|work(?:ing)?|teaching|employment)\s+experience|experience|"
     r"technical\s+skills|skills(?:\s*(?:&|and)\s*qualities)?|"
     r"certifications?|certificates?|licenses?|projects?|contact|"
+    r"trainings?|seminars?|trainings?\s*(?:&|and|/)\s*seminars?|"
+    r"seminars?\s*(?:&|and|/)\s*trainings?|character\s+references?|"
     r"personal\s+(?:information|data)|scholastic\s+records?)\s*:?[ \t]*$"
 )
 
@@ -65,6 +67,19 @@ def _text_quality_score(text):
     trailing_orphaned_heading = int(bool(
         lines and _SECTION_HEADING_RE.fullmatch(lines[-1])
     ))
+    # Some visually ordered PDFs store each text box as a separate object and
+    # expose several section headings before any of their content. A run of
+    # headings near the start is therefore strong evidence that the candidate
+    # follows content-stream order instead of the page's reading order.
+    early_heading_run = 0
+    current_heading_run = 0
+    for line in lines[:10]:
+        if _SECTION_HEADING_RE.fullmatch(line):
+            current_heading_run += 1
+            early_heading_run = max(early_heading_run, current_heading_run)
+        else:
+            current_heading_run = 0
+    orphaned_heading_run = max(0, early_heading_run - 1)
 
     return (
         min(len(words), 1200) * 0.035
@@ -78,6 +93,7 @@ def _text_quality_score(text):
         - concatenated_headings * 5
         - punctuation_spacing * 0.12
         - trailing_orphaned_heading * 8
+        - orphaned_heading_run * 5
         - word_line_fragmentation
     )
 
@@ -152,9 +168,6 @@ def _find_column_gutter(words, page_width):
             if x - run_start >= 16:
                 runs.append((run_start, x))
             run_start = None
-    if not runs:
-        return None
-
     for left_edge, right_edge in sorted(runs, key=lambda run: run[1] - run[0], reverse=True):
         left_words = [word for word in words if word['x1'] <= left_edge]
         right_words = [word for word in words if word['x0'] >= right_edge]
@@ -164,6 +177,41 @@ def _find_column_gutter(words, page_width):
             smaller_share = min(len(left_words), len(right_words)) / len(words)
             if smaller_share >= 0.12:
                 return left_edge, right_edge
+
+    # Large names, colored heading bands, and lines that reach the edge of a
+    # column can cross an otherwise valid gutter. In those templates the word
+    # *centers* still form two clear clusters. Use that evidence only for a
+    # large central gap with substantial content on both sides; this keeps
+    # ordinary single-column resumes and right-aligned date rows in one flow.
+    centers = sorted({
+        round((word['x0'] + word['x1']) / 2, 2)
+        for word in words
+        if page_width * 0.12 <= (word['x0'] + word['x1']) / 2 <= page_width * 0.88
+    })
+    minimum_center_gap = max(20.0, page_width * 0.045)
+    center_gaps = sorted(
+        (
+            (right - left, left, right)
+            for left, right in zip(centers, centers[1:])
+            if right - left >= minimum_center_gap
+        ),
+        reverse=True,
+    )
+    for _gap, left_edge, right_edge in center_gaps:
+        split_x = (left_edge + right_edge) / 2
+        left_words = [
+            word for word in words
+            if (word['x0'] + word['x1']) / 2 < split_x
+        ]
+        right_words = [
+            word for word in words
+            if (word['x0'] + word['x1']) / 2 >= split_x
+        ]
+        if len(left_words) < 20 or len(right_words) < 20:
+            continue
+        smaller_share = min(len(left_words), len(right_words)) / len(words)
+        if smaller_share >= 0.20:
+            return left_edge, right_edge
     return None
 
 
@@ -333,14 +381,18 @@ def extract_text_from_docx(filepath):
 
     def _append_table(table):
         rows = []
+        # python-docx exposes a vertically merged cell again through every row
+        # that the cell spans. Track the underlying XML elements for the whole
+        # table so a resume section stored in one tall layout cell is emitted
+        # once rather than repeated after each neighboring sidebar row.
+        seen_cells = set()
         for row in table.rows:
             row_cells = []
-            seen_cells = set()
             for cell in row.cells:
-                cell_id = id(cell._tc)
-                if cell_id in seen_cells:
+                cell_element = cell._tc
+                if cell_element in seen_cells:
                     continue
-                seen_cells.add(cell_id)
+                seen_cells.add(cell_element)
                 cell_parts = []
                 cell_text = cell.text.strip()
                 if cell_text:
@@ -484,7 +536,10 @@ def _clean_extracted_text(text):
     text = text.replace('\u00ad', '')  # soft hyphen
 
     # Re-join soft-hyphenated line breaks: "Develop-\nment" → "Development"
-    text = re.sub(r'(?<=[A-Za-z]{2})-\s*\n\s*(?=[A-Za-z]{2})', '', text)
+    # Join genuine word wrapping (``Develop-`` / ``ment``), but preserve a
+    # capitalized next line. In compact resumes ``Coordinator-`` followed by
+    # ``National University`` is a role/company separator, not hyphenation.
+    text = re.sub(r'(?<=[A-Za-z]{2})-\s*\n\s*(?=[a-z]{2})', '', text)
     text = re.sub(r'\s+-\s*\n\s*', ' - ', text)
     text = re.sub(r'\n\s*-\s+', '\n- ', text)
     text = re.sub(r'\b((?:19|20)\d)\s+(\d)\b', r'\1\2', text)

@@ -75,7 +75,10 @@ SECTION_ALIASES = {
     ),
     "languages": (r"languages?", r"langues"),
     "references": (r"references?", r"character references?"),
-    "profile": (r"summary", r"professional summary", r"profile", r"objective", r"career objective"),
+    "profile": (
+        r"summary", r"professional summary", r"profile", r"about me",
+        r"objective", r"career objective",
+    ),
     "personal": (
         r"personal information", r"personal data", r"personal background",
         r"contact", r"contact information",

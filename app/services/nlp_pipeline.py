@@ -195,6 +195,7 @@ def extract_certifications(text):
 
     def add(name, credential_type='Certification', date=None, issuer=None):
         name = re.sub(r'^[\s\-*\u2022\u25aa\u25cf\uf0b7\uf06c]+', '', name or '')
+        name = name.replace('\ufffd', '')
         name = re.sub(r'\s+', ' ', name).strip(' .,:;|-')
         name = re.sub(r',\s*\)$', ')', name)
         if not name:
@@ -352,6 +353,27 @@ def extract_certifications(text):
             if index in training_consumed:
                 index += 1
                 continue
+            inline_date = date_re.search(line)
+            if inline_date and not date_re.fullmatch(line.strip(' ()')):
+                title = date_re.sub('', line, count=1).strip(' .,:;|-')
+                consumed = 1
+                if index + 1 < section_end:
+                    continuation = lines[index + 1]
+                    continuation_section = classify_section_heading(continuation)
+                    if (
+                        not date_re.search(continuation)
+                        and not continuation_section
+                        and (
+                            re.match(r'^[\s"\'\u201c\u201d\ufffd]', continuation)
+                            or re.search(r'(?i)\bmodule\s+[ivx]+\s*$', title)
+                        )
+                    ):
+                        title = f'{title} {continuation}'.strip()
+                        consumed = 2
+                if title:
+                    add(title, 'Training', inline_date.group(0))
+                    index += consumed
+                    continue
             year_entry = re.match(
                 r'^(?P<year>(?:19|20)\d{2})\s+(?:(?:Participant|Paticipant),?\s*)?(?P<title>.+)$',
                 line,
@@ -772,6 +794,34 @@ def extract_contact_info(text):
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     header_lines = lines[:12]
 
+    # A resume may repeat the applicant's name in a personal-information
+    # section using a shortened middle initial (for example, the full header
+    # says "Christine Joy Castro Angeles" while a labelled row says
+    # "Angeles, Christine Joy C.").  Keep the fuller header spelling when the
+    # ordered name parts agree and the only differences expand initials.
+    if name:
+        labelled_words = _clean_name_candidate(name).split()
+        for header_line in header_lines[:3]:
+            header_candidate = _clean_name_candidate(header_line)
+            header_words = header_candidate.split()
+            if (
+                not _is_probable_person_name(header_candidate)
+                or len(header_words) != len(labelled_words)
+                or len(header_candidate) <= len(_clean_name_candidate(name))
+            ):
+                continue
+            name_parts_agree = all(
+                labelled.lower() == header.lower()
+                or (
+                    len(labelled.strip(".'-")) == 1
+                    and header.lower().startswith(labelled.lower().strip(".'-"))
+                )
+                for labelled, header in zip(labelled_words, header_words)
+            )
+            if name_parts_agree:
+                name = _format_person_name(header_candidate)
+                break
+
     # A mononymous candidate can be a valid name. Accept a one-word first line
     # only when the following line is clearly a professional title; this keeps
     # ordinary one-word headings and technologies out of the identity field.
@@ -1069,6 +1119,23 @@ def extract_education(text):
                 line = f'{line} {scan_lines[index].strip()}'
                 index += 1
             rebuilt_education_lines.append(line)
+            continue
+        if (
+            re.search(
+                r'(?i)\bBachelor(?:\'s)?\b.*\b(?:Major\s+in\s+)?'
+                r'(?:Biological|Physical|Computer|Information|Data|Social|Political|Environmental)$',
+                line,
+            )
+            and index + 1 < len(scan_lines)
+            and re.fullmatch(
+                r'(?i)(?:Science|Sciences|Arts|Studies|Technology|Engineering)',
+                scan_lines[index + 1].strip(),
+            )
+        ):
+            rebuilt_education_lines.append(
+                f'{line} {scan_lines[index + 1].strip()}'
+            )
+            index += 2
             continue
         rebuilt_education_lines.append(line)
         index += 1
@@ -2235,6 +2302,55 @@ def extract_experience_records(text):
 
     BULLET_PREFIX_RE = re.compile(r'^[\-\*•\u2022\u25aa\u2751]\s*')
 
+    # Coordinate-aware PDF extraction preserves visual line wrapping. Repair
+    # only job rows that are immediately anchored by a date range: a lowercase
+    # title continuation (``and Coordinator - Freelance``), or an employer
+    # name wrapped onto the next line. Tight ``Role- Employer`` separators are
+    # normalized without changing genuine hyphenated titles such as
+    # ``Editor-in-Chief``.
+    tight_role_company_re = re.compile(
+        r'(?<=[A-Za-z])-\s+(?=(?:[A-Z][A-Za-z]|Freelance\b))'
+    )
+    repaired_experience_lines = []
+    line_index = 0
+    while line_index < len(scan_lines):
+        current = tight_role_company_re.sub(' - ', scan_lines[line_index].strip())
+        next_line = (
+            tight_role_company_re.sub(' - ', scan_lines[line_index + 1].strip())
+            if line_index + 1 < len(scan_lines) else ''
+        )
+        second_next = (
+            scan_lines[line_index + 2].strip()
+            if line_index + 2 < len(scan_lines) else ''
+        )
+        if (
+            next_line
+            and second_next
+            and DATE_RANGE_RE.search(second_next)
+            and TITLE_KEYWORDS.search(current)
+            and re.match(r'(?i)^(?:and|or)\s+', next_line)
+            and TITLE_KEYWORDS.search(next_line)
+        ):
+            repaired_experience_lines.append(f'{current} {next_line}')
+            line_index += 2
+            continue
+        if (
+            next_line
+            and second_next
+            and DATE_RANGE_RE.search(second_next)
+            and re.search(r'\s+-\s+', current)
+            and TITLE_KEYWORDS.search(current.split(' - ', 1)[0])
+            and not TITLE_KEYWORDS.search(next_line)
+            and not DATE_RANGE_RE.search(next_line)
+            and len(next_line.split()) <= 6
+        ):
+            repaired_experience_lines.append(f'{current} {next_line}')
+            line_index += 2
+            continue
+        repaired_experience_lines.append(current)
+        line_index += 1
+    scan_lines = repaired_experience_lines
+
     def _is_probable_skill_line(line_text):
         cleaned = BULLET_PREFIX_RE.sub('', line_text).strip()
         if not cleaned:
@@ -2540,7 +2656,14 @@ def extract_experience_records(text):
 
         title_indexes = [
             index for index, part in enumerate(parts)
-            if TITLE_KEYWORDS.search(part) and _is_probable_title(part)
+            if TITLE_KEYWORDS.search(part) and (
+                _is_probable_title(part)
+                or (
+                    part.count('/') >= 1
+                    and len(TITLE_KEYWORDS.findall(part)) >= 2
+                    and len(part) <= 140
+                )
+            )
         ]
         if not title_indexes:
             return None, None, None
@@ -2682,6 +2805,23 @@ def extract_experience_records(text):
     # Word tables often export an employer row ending in “DURATION”, followed
     # by a role row containing the actual date range. Treat those two rows as
     # one entry so the first employers in long histories are not skipped.
+    # Compact visual resumes often place ``Role - Employer`` immediately
+    # above its date range. Parse that strong three-field relationship before
+    # the generic block logic can treat the employer as part of the title.
+    for date_index, date_line in enumerate(scan_lines):
+        if date_index == 0 or not DATE_RANGE_RE.search(date_line):
+            continue
+        if DATE_RANGE_RE.sub('', date_line).strip(' ()[]-â€“â€” ,;|'):
+            continue
+        previous_role_company = scan_lines[date_index - 1].strip()
+        if not re.search(r'\s+-\s+', previous_role_company):
+            continue
+        title, company, location = _parse_inline_role_company(
+            previous_role_company
+        )
+        if title and company:
+            _add_structured(title, company, date_line, location)
+
     for index in range(len(scan_lines) - 1):
         employer_row = scan_lines[index].strip()
         role_row = scan_lines[index + 1].strip()
@@ -3473,6 +3613,28 @@ def extract_experience_records(text):
             )
             for existing in structured_records
         ):
+            continue
+        if candidate_index >= structured_count and any(
+            existing['job_title'].casefold() == (rec.get('job_title') or '').casefold()
+            and abs(float(existing.get('years') or 0) - float(rec.get('years') or 0)) < 0.05
+            and existing.get('company')
+            and existing['company'].casefold() in (rec.get('company') or '').casefold()
+            and existing['job_title'].casefold() in (rec.get('company') or '').casefold()
+            for existing in structured_records
+        ):
+            continue
+        if any(
+            other is not rec
+            and other.get('job_title', '').casefold() == rec.get('job_title', '').casefold()
+            and abs(float(other.get('years') or 0) - float(rec.get('years') or 0)) < 0.05
+            and other.get('company')
+            and len(other['company']) < len(company_value)
+            and other['company'].casefold() in company_value.casefold()
+            and rec.get('job_title', '').casefold() in company_value.casefold()
+            for other in record_candidates
+        ):
+            # A fallback row absorbed the complete ``Role - Employer`` line
+            # as its company. Keep the shorter, separately parsed employer.
             continue
         is_valid, _ = validate_experience_record(rec)
         if not is_valid:

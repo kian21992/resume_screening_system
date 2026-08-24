@@ -1070,6 +1070,47 @@ Python SQL"""
         self.assertLess(extracted.index("Work Experience"), extracted.index("Teacher"))
         self.assertLess(extracted.index("Teacher"), extracted.index("June 2020 - Present"))
 
+    def test_vertically_merged_resume_table_does_not_repeat_into_skills(self):
+        import docx
+
+        document = docx.Document()
+        table = document.add_table(rows=6, cols=2)
+        table.cell(0, 1).text = "ARENAS, Rhea Hilary A."
+        main_content = table.cell(1, 1).merge(table.cell(5, 1))
+        main_content.text = """Experience
+Staff Writer
+CAST Chronicle
+2019-2021
+Education
+Bachelor of Secondary Education major in English
+Pangasinan State University
+2018-2022
+Skills
+Computer Literate
+Leadership
+Patience
+Verbal or Written Communication
+Lesson Planning"""
+        table.cell(2, 0).text = "Purok 4, Barangay Anunas, Angeles City, Pampanga"
+        table.cell(3, 0).text = "0956-766-9914"
+        table.cell(4, 0).text = "arenasrheahilary@gmail.com"
+        table.cell(5, 0).text = "References\nBernie O. Pioquinto"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "vertical_merge_resume.docx")
+            document.save(path)
+            extracted = extract_text_from_docx(path)
+
+        self.assertEqual(extracted.count("Experience"), 1)
+        self.assertEqual(extracted.count("Skills"), 1)
+        self.assertEqual(extract_resume_skills(extracted), [
+            "Computer Literate",
+            "Leadership",
+            "Patience",
+            "Verbal or Written Communication",
+            "Lesson Planning",
+        ])
+
     def test_cleaner_preserves_wrapped_date_ranges(self):
         raw = "Work Experience\nSoftware Engineer\nAcme Digital Solutions\nJanuary 2020 -\nPresent"
         cleaned = _clean_extracted_text(raw)
@@ -1081,6 +1122,13 @@ Python SQL"""
         cleaned = _clean_extracted_text(raw)
 
         self.assertIn("Development of internal applications", cleaned)
+
+    def test_cleaner_preserves_role_company_separator_before_capitalized_employer(self):
+        cleaned = _clean_extracted_text(
+            "Work Experience\nActivities Coordinator-\nNational University\n2023-2024"
+        )
+
+        self.assertIn("Activities Coordinator-\nNational University", cleaned)
 
     def test_cleaner_removes_invisible_word_break_artifacts(self):
         cleaned = _clean_extracted_text("Data\u200bbase Admin\u00adistrator")
@@ -1157,6 +1205,85 @@ January 2020 - Present
         self.assertLess(extracted.index("EDUCATION"), extracted.index("Pampanga State University"))
         education = extract_education(extracted)
         self.assertEqual(education[0]["institution"], "Pampanga State University")
+
+    def test_crossing_name_two_column_pdf_reconstructs_degree_and_work_history(self):
+        class PositionedPage:
+            width = 600
+
+            def __init__(self):
+                self.words = [
+                    {"text": "MELVIN", "x0": 215, "x1": 400, "top": 20},
+                    {"text": "AGUILAR", "x0": 215, "x1": 420, "top": 65},
+                ]
+
+            def add_line(self, x, top, value):
+                cursor = x
+                for token in value.split():
+                    width = max(len(token) * 4.2, 7)
+                    self.words.append({
+                        "text": token,
+                        "x0": cursor,
+                        "x1": cursor + width,
+                        "top": top,
+                    })
+                    cursor += width + 3
+
+            def extract_words(self, **_kwargs):
+                return self.words
+
+        page = PositionedPage()
+        for index, value in enumerate([
+            "EXPERIENCES",
+            "Student Development and Activities Coordinator-",
+            "National University Clark",
+            "2023-2024",
+            "Professional Event Host/ Event Manager/ Event Planner",
+            "and Coordinator- Freelance",
+            "2016- Present",
+            "Full Time Faculty Member- National University Clark",
+            "2023-2024",
+            "Full Time Faculty Member- University of the Assumption",
+            "2019-2023",
+            "Part Time College Instructor- City College of San",
+            "Fernando Pampanga",
+            "2021-2023",
+            "EDUCATION",
+            "City College of San Fernando Pampanga",
+            "Bachelor of Secondary Education Major in Biological",
+            "Science",
+            "2015-2019",
+        ]):
+            page.add_line(255, 125 + index * 18, value)
+        for index, value in enumerate([
+            "About Me", "Experienced educator and event host",
+            "Teaching science subjects in senior high school",
+            "Professional educator with classroom experience",
+            "+63 968 597 6305", "melvinaguilar@example.com",
+            "San Fernando Pampanga Philippines",
+            "CERTIFICATES AND LICENSE", "Board passer",
+        ]):
+            page.add_line(25, 170 + index * 24, value)
+
+        extracted = _clean_extracted_text(_extract_page_columns(page))
+
+        self.assertEqual(extract_contact_info(extracted)["name"], "Melvin Aguilar")
+        self.assertEqual(extract_education(extracted), [{
+            "degree": "Bachelor of Secondary Education Major in Biological Science",
+            "institution": "City College of San Fernando Pampanga",
+        }])
+        self.assertEqual([
+            (record["job_title"], record["company"])
+            for record in extract_experience_records(extracted)
+        ], [
+            (
+                "Professional Event Host/ Event Manager/ Event Planner and Coordinator",
+                "Freelance",
+            ),
+            ("Full Time Faculty Member", "National University Clark"),
+            ("Full Time Faculty Member", "University of the Assumption"),
+            ("Part Time College Instructor", "City College of San Fernando Pampanga"),
+            ("Student Development and Activities Coordinator", "National University Clark"),
+        ])
 
 
 class TestAnalyzeSkills(unittest.TestCase):
