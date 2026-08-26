@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+from difflib import SequenceMatcher
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,23 @@ _POSITIONED_HEADING_KEYS = {
     'PROFESSIONALEXPERIENCE', 'QUALIFICATIONSANDSKILLS', 'REFERENCE',
     'REFERENCES', 'SEMINAR', 'SEMINARS', 'SKILL', 'SKILLS', 'TRAINING',
     'TRAININGS', 'WORKANDTRAININGEXPERIENCE', 'WORKEXPERIENCE',
+}
+
+
+_PDF_IDENTITY_NAME_RED_FLAGS_RE = re.compile(
+    r'(?i)\b(?:date\s+of\s+birth|work\s+immersion|resume|jobs?|skills?|'
+    r'qualities|objective|summary|experience|education|contact|email|phone|'
+    r'address|location|profile|purok|barangay|city|province|'
+    r'learning\s+environment)\b'
+)
+
+_PDF_EMAIL_TRAILING_LABEL_RE = re.compile(
+    r'(?i)(?:com|net|org|edu|gov|ph)(?:contact|email|phone|mobile)$'
+)
+
+_PDF_ACTION_COMPANY_NAMES = {
+    'assisting', 'handling', 'maintaining', 'making', 'preparing',
+    'providing', 'sharing', 'teaching',
 }
 
 
@@ -162,8 +180,263 @@ def _text_quality_score(text):
     )
 
 
+def _scored_pdf_candidates(candidates):
+    """Return non-empty candidates with their readability scores."""
+    return [
+        (method, text, _text_quality_score(text))
+        for method, text in candidates
+        if text and text.strip()
+    ]
+
+
+def _select_best_pdf_text_by_quality(candidates):
+    """Legacy whole-document selection, retained for regression comparison."""
+    usable = _scored_pdf_candidates(candidates)
+    if not usable:
+        return None, None
+
+    method, text, _score = max(usable, key=lambda item: item[2])
+    return text, method
+
+
+def _pdf_candidate_field_validation(text):
+    """Find strong field-level evidence that an extraction is corrupted.
+
+    The checks are deliberately conservative. Missing optional fields are
+    reported for diagnostics but do not disqualify a parser. Only values that
+    look like a section/address fragment, an email joined to its label, or a
+    prose sentence misclassified as work history count as hard issues.
+    """
+    from .nlp_pipeline import extract_contact_info, extract_experience_records
+
+    cleaned = _clean_extracted_text(text)
+    contact = dict(extract_contact_info(cleaned))
+    recovered_name = _recover_email_supported_uppercase_name(
+        cleaned,
+        contact.get('email'),
+        contact.get('name'),
+    )
+    if recovered_name:
+        contact['name'] = recovered_name
+    identity_issues = []
+    structure_issues = []
+    diagnostics = []
+
+    name = contact.get('name') or 'Unknown Candidate'
+    if name == 'Unknown Candidate':
+        diagnostics.append('missing_name')
+    elif (
+        _PDF_IDENTITY_NAME_RED_FLAGS_RE.search(name)
+        or re.search(r'[\uE000-\uF8FF\uFFFD]', name)
+        or re.search(r'(?i)(?:@|\.(?:com|net|org|edu|gov|ph)\b)', name)
+    ):
+        identity_issues.append('invalid_name')
+
+    email = contact.get('email') or 'Unknown Email'
+    if email == 'Unknown Email':
+        diagnostics.append('missing_email')
+    elif _PDF_EMAIL_TRAILING_LABEL_RE.search(email):
+        identity_issues.append('email_joined_to_label')
+
+    phone = contact.get('phone') or 'Unknown Phone'
+    if phone == 'Unknown Phone':
+        diagnostics.append('missing_phone')
+
+    suspicious_records = []
+    for record in extract_experience_records(cleaned):
+        title = (record.get('job_title') or '').strip()
+        company = (record.get('company') or '').strip()
+        prose_title = (
+            title[:1].islower()
+            and len(re.findall(r"[A-Za-z][A-Za-z'\-]*", title)) >= 7
+        )
+        action_company = company.lower().strip(' .') in _PDF_ACTION_COMPANY_NAMES
+        if prose_title or action_company:
+            suspicious_records.append((title, company))
+
+    if suspicious_records:
+        structure_issues.append('prose_as_experience')
+
+    return {
+        'contact': contact,
+        'identity_issues': tuple(identity_issues),
+        'structure_issues': tuple(structure_issues),
+        'diagnostics': tuple(diagnostics),
+        'suspicious_experience_records': tuple(suspicious_records),
+    }
+
+
+def _recover_email_supported_uppercase_name(text, email, current_name):
+    """Recover a full all-caps name when the email confirms its identity.
+
+    Some content-stream readers concatenate sidebar headings immediately
+    before the visible name. The normal header ranker can then prefer a nearby
+    nickname. An all-caps candidate whose letters closely match the applicant
+    email is stronger evidence, while the email check prevents ordinary
+    headings from being treated as names.
+    """
+    if not email or email == 'Unknown Email' or '@' not in email:
+        return None
+
+    email_local = ''.join(
+        char for char in email.split('@', 1)[0].lower() if char.isalpha()
+    )
+    if len(email_local) < 5:
+        return None
+
+    def compact_identity(value):
+        tokens = re.findall(r"[A-Za-z][A-Za-z'\-]*", value or '')
+        return ''.join(
+            token.lower() for token in tokens if len(token.strip("'-")) > 1
+        )
+
+    current_compact = compact_identity(current_name)
+    current_similarity = (
+        SequenceMatcher(None, email_local, current_compact).ratio()
+        if current_compact else 0.0
+    )
+    best = None
+    for match in re.finditer(
+        r"[A-Z][A-Z'\-]{1,}(?:[ \t]+(?:[A-Z][A-Z'\-]{1,}|[A-Z]\.?)){1,4}",
+        text,
+    ):
+        candidate = match.group(0).strip()
+        meaningful = [
+            token for token in re.findall(r"[A-Z][A-Z'\-]*", candidate)
+            if len(token.strip("'-")) > 1
+        ]
+        if len(meaningful) < 2:
+            continue
+        candidate_compact = ''.join(token.lower() for token in meaningful)
+        similarity = SequenceMatcher(None, email_local, candidate_compact).ratio()
+        if similarity < 0.82:
+            continue
+        formatted = ' '.join(
+            token.upper() if len(token.rstrip('.')) == 1
+            else token.capitalize()
+            for token in candidate.split()
+        )
+        ranked = (similarity, len(meaningful), len(candidate), formatted)
+        if best is None or ranked[:3] > best[:3]:
+            best = ranked
+
+    if best and best[0] >= current_similarity + 0.08:
+        return best[3]
+    return None
+
+
+def _email_boundary_corruption_index(assessments, texts):
+    """Return the candidate whose email swallowed a missing name token."""
+    if len(assessments) != 2:
+        return None
+
+    parsed = []
+    for assessment in assessments:
+        contact = assessment['contact']
+        email = (contact.get('email') or '').lower()
+        if email in {'', 'unknown email'} or '@' not in email:
+            return None
+        local, domain = email.split('@', 1)
+        parsed.append((local, domain, contact.get('name') or ''))
+
+    if parsed[0][1] != parsed[1][1] or parsed[0][0] == parsed[1][0]:
+        return None
+
+    longer_index = 0 if len(parsed[0][0]) > len(parsed[1][0]) else 1
+    shorter_index = 1 - longer_index
+    longer_local = parsed[longer_index][0]
+    shorter_local = parsed[shorter_index][0]
+
+    extra = None
+    if longer_local.startswith(shorter_local):
+        extra = longer_local[len(shorter_local):]
+    elif longer_local.endswith(shorter_local):
+        extra = longer_local[:-len(shorter_local)]
+    if not extra or len(extra) < 2 or not extra.isalpha():
+        return None
+
+    def name_tokens(value):
+        return {
+            token.lower()
+            for token in re.findall(r"[A-Za-z][A-Za-z'\-]*", value)
+            if len(token) >= 2
+        }
+
+    reference_name_tokens = name_tokens(parsed[shorter_index][2])
+    suspect_name_tokens = name_tokens(parsed[longer_index][2])
+    if extra not in reference_name_tokens or extra in suspect_name_tokens:
+        return None
+
+    reference_header = '\n'.join(
+        line for line in texts[shorter_index].splitlines()[:12] if line.strip()
+    )
+    if not re.search(rf'(?i)(?<![A-Za-z]){re.escape(extra)}(?![A-Za-z])', reference_header):
+        return None
+    return longer_index
+
+
+def _validated_contact_value(assessment, field):
+    """Return a usable contact value, excluding fields with hard issues."""
+    value = assessment['contact'].get(field)
+    unknown = {
+        'name': 'Unknown Candidate',
+        'email': 'Unknown Email',
+        'phone': 'Unknown Phone',
+    }[field]
+    if not value or value == unknown:
+        return None
+
+    issues = set(assessment['identity_issues'])
+    if field == 'name' and issues & {'invalid_name', 'name_token_joined_to_email'}:
+        return None
+    if field == 'email' and issues & {
+        'email_joined_to_label', 'name_token_joined_to_email'
+    }:
+        return None
+    return value
+
+
+def _merge_validated_contact_fields(base_text, base_index, usable, assessments):
+    """Prepend corrected contact labels without replacing the document body."""
+    base_assessment = assessments[base_index]
+    selected = {
+        field: _validated_contact_value(base_assessment, field)
+        for field in ('name', 'email', 'phone')
+    }
+    source_indexes = {field: base_index for field in selected}
+
+    for field in ('name', 'email', 'phone'):
+        if selected[field] is not None:
+            continue
+        for index, assessment in enumerate(assessments):
+            value = _validated_contact_value(assessment, field)
+            if value is not None:
+                selected[field] = value
+                source_indexes[field] = index
+                break
+
+    changed_fields = [
+        field for field, index in source_indexes.items()
+        if index != base_index and selected[field] is not None
+    ]
+    if not changed_fields:
+        return base_text, usable[base_index][0]
+
+    labels = {'name': 'Candidate Name', 'email': 'Email', 'phone': 'Phone'}
+    contact_header = '\n'.join(
+        f"{labels[field]}: {selected[field]}"
+        for field in ('name', 'email', 'phone')
+        if selected[field] is not None
+    )
+    source_methods = sorted({
+        usable[source_indexes[field]][0] for field in changed_fields
+    })
+    method = f"{usable[base_index][0]}+{'/'.join(source_methods)}-contact"
+    return f'{contact_header}\n{base_text}', method
+
+
 def _select_best_pdf_text(candidates):
-    """Return the highest-quality non-empty extraction and its method name."""
+    """Select PDF text using field validity before document readability."""
     usable = [
         (method, text, _text_quality_score(text))
         for method, text in candidates
@@ -172,8 +445,51 @@ def _select_best_pdf_text(candidates):
     if not usable:
         return None, None
 
-    method, text, _score = max(usable, key=lambda item: item[2])
-    return text, method
+    if len(usable) == 1:
+        method, text, _score = usable[0]
+        return text, method
+
+    assessments = [_pdf_candidate_field_validation(text) for _method, text, _score in usable]
+    boundary_index = _email_boundary_corruption_index(
+        assessments,
+        [text for _method, text, _score in usable],
+    )
+    if boundary_index is not None:
+        issues = list(assessments[boundary_index]['identity_issues'])
+        issues.append('name_token_joined_to_email')
+        assessments[boundary_index]['identity_issues'] = tuple(issues)
+
+    structure_issue_counts = [
+        len(assessment['structure_issues']) for assessment in assessments
+    ]
+    minimum_issues = min(structure_issue_counts)
+    safest_indexes = [
+        index for index, count in enumerate(structure_issue_counts)
+        if count == minimum_issues
+    ]
+
+    readability_index = max(range(len(usable)), key=lambda index: usable[index][2])
+    base_index = readability_index
+    if readability_index not in safest_indexes and len(safest_indexes) == 1:
+        safest_index = safest_indexes[0]
+        # Do not replace a broadly readable document with a catastrophically
+        # poor extraction merely because one field happened to look cleaner.
+        # All observed field-correct alternatives are well within this margin.
+        if usable[safest_index][2] >= usable[readability_index][2] - 25:
+            base_index = safest_index
+            logger.debug(
+                'Field validation selected %s over %s: %s',
+                usable[safest_index][0],
+                usable[readability_index][0],
+                assessments[readability_index]['structure_issues'],
+            )
+
+    return _merge_validated_contact_fields(
+        usable[base_index][1],
+        base_index,
+        usable,
+        assessments,
+    )
 
 
 def _words_to_rows(words, y_tolerance=3):

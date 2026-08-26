@@ -375,6 +375,58 @@ Unique State College
         response = self.client.get("/screening_results")
         self.assertIn(b'name="sort" onchange="this.form.submit()"', response.data)
 
+    def test_all_jobs_lists_and_navigates_every_candidate(self):
+        lowest_result_id = None
+        for index in range(21):
+            applicant = Applicant(
+                name=f"Load Candidate {index:02d}",
+                email=f"load{index:02d}@example.com",
+                phone=f"0919{index:07d}",
+                applied_job_id=self.job_id,
+            )
+            db.session.add(applicant)
+            db.session.flush()
+            resume = Resume(
+                applicant_id=applicant.id,
+                job_id=self.job_id,
+                uploaded_by=self.user_id,
+                filename=f"load-{index:02d}.docx",
+                filepath=f"load-{index:02d}.docx",
+                original_text=f"Load Candidate {index:02d}",
+                extraction_status="success",
+            )
+            db.session.add(resume)
+            db.session.flush()
+            result = ScreeningResult(
+                resume_id=resume.id,
+                applicant_id=applicant.id,
+                job_id=self.job_id,
+                fit_score=40 - index,
+                skill_score=0,
+                experience_score=0,
+                education_score=0,
+                recommendation_label="Not Qualified",
+                confidence_level="High",
+                confidence_reason="Load-test candidate.",
+                summary="Load-test candidate.",
+            )
+            result.set_matched_skills([])
+            result.set_missing_skills(["Classroom Management"])
+            db.session.add(result)
+            db.session.flush()
+            if index == 20:
+                lowest_result_id = result.id
+        db.session.commit()
+
+        listing = self.client.get("/screening_results")
+        self.assertEqual(listing.status_code, 200)
+        self.assertIn(b"Showing 23 candidates.", listing.data)
+        self.assertIn(b"Load Candidate 20", listing.data)
+
+        detail = self.client.get(f"/screening_results/{lowest_result_id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn(b"Candidate 23 of 23", detail.data)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,8 +51,6 @@ def _ordered_screening_results_query(job_id=None, reviewer_status='', sort='fit_
 
 def _candidate_navigation(result_id, job_id=None, reviewer_status='', sort='fit_desc'):
     query = _ordered_screening_results_query(job_id, reviewer_status, sort)
-    if not job_id and not reviewer_status:
-        query = query.limit(20)
     ordered_results = query.all()
     result_ids = [item.id for item in ordered_results]
 
@@ -72,7 +70,7 @@ def screening_results():
     jobs = JobDescription.query.all()
 
     query = _ordered_screening_results_query(job_id, reviewer_status, sort)
-    results = query.all() if job_id or reviewer_status else query.limit(20).all()
+    results = query.all()
         
     return render_template(
         'screening/results.html',

@@ -1,6 +1,7 @@
 from app.services.education_domain import validate_experience_record
 from app.services.extractor import (
     _clean_extracted_text,
+    _recover_email_supported_uppercase_name,
     _select_best_pdf_text,
     _text_quality_score,
 )
@@ -365,6 +366,98 @@ I certify that all information shown is true and correct.
 
     assert method == "pdfplumber"
     assert selected == readable
+
+
+def test_pdf_selector_rejects_name_token_joined_to_email(monkeypatch):
+    correct = """Alex Morgan Lee
+morgan@example.com
+PROFESSIONAL SUMMARY
+Experienced software professional
+WORK EXPERIENCE
+Software Engineer
+Example Systems
+2020 - Present
+EDUCATION
+Bachelor of Science
+Example University
+"""
+    joined = correct.replace(
+        "Alex Morgan Lee\nmorgan@example.com",
+        "Alex Morgan Leemorgan@example.com",
+    )
+
+    monkeypatch.setattr(
+        'app.services.extractor._text_quality_score',
+        lambda text: 90.0 if text == joined else 80.0,
+    )
+    selected, method = _select_best_pdf_text([
+        ('pdfplumber', correct),
+        ('PyPDF2', joined),
+    ])
+
+    assert method == 'PyPDF2+pdfplumber-contact'
+    assert extract_contact_info(selected) == {
+        'name': 'Alex Morgan Lee',
+        'email': 'morgan@example.com',
+        'phone': 'Unknown Phone',
+    }
+    assert joined in selected
+
+
+def test_pdf_selector_rejects_prose_misclassified_as_experience(monkeypatch):
+    correct = """Enera Pablo
+enera@example.com
+WORK EXPERIENCE
+Principal
+Nazarene Academy Inc
+2020 - Present
+EDUCATION
+Bachelor of Elementary Education
+Example University
+"""
+    false_records = correct + """Sharing
+my ideas to the Lead Teachers in making lesson plans and activities
+Making
+lesson plan worksheets and activities in teaching Filipino
+"""
+
+    monkeypatch.setattr(
+        'app.services.extractor._text_quality_score',
+        lambda text: 91.0 if text == false_records else 90.0,
+    )
+    monkeypatch.setattr(
+        'app.services.nlp_pipeline.extract_experience_records',
+        lambda text: ([{
+            'job_title': 'my ideas to the Lead Teachers in making lesson plans and activities',
+            'company': 'Sharing',
+        }] if 'my ideas to the Lead Teachers' in text else [{
+            'job_title': 'Principal',
+            'company': 'Nazarene Academy Inc',
+        }]),
+    )
+    selected, method = _select_best_pdf_text([
+        ('pdfplumber', correct),
+        ('PyPDF2', false_records),
+    ])
+
+    assert method == 'pdfplumber'
+    assert selected == correct
+
+
+def test_email_supported_uppercase_name_beats_sidebar_nickname():
+    text = """Profile
+0917-555-0199
+alexasmorgan@gmail.com
+Lex Morgan
+EnglishLanguageReferencesALEXA S. MORGAN
+Science Teacher
+"""
+
+    assert _recover_email_supported_uppercase_name(
+        text,
+        'alexasmorgan@gmail.com',
+        'Lex Morgan',
+    ) == 'Alexa S. Morgan'
 
 
 def test_role_then_date_employer_and_location_preserves_complete_record():
