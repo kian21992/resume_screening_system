@@ -52,7 +52,9 @@ class Resume(db.Model):
     uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     filename = db.Column(db.String(255), nullable=False)
     filepath = db.Column(db.String(500), nullable=False)
-    original_text = db.Column(db.Text(16777215), nullable=False) # MEDIUMTEXT
+    # Plain TEXT is portable across SQLite, PostgreSQL, and MySQL. PostgreSQL
+    # rejects the MySQL-style ``TEXT(length)`` type modifier.
+    original_text = db.Column(db.Text, nullable=False)
     upload_date = db.Column(db.DateTime, default=datetime.utcnow)
     extraction_status = db.Column(db.String(50), default='pending') # pending, success, failed
 
