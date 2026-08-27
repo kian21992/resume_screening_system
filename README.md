@@ -145,11 +145,13 @@ python -m flask --app app migrate-device-isolation
 ```
 
 For existing jobs, the migration infers ownership from their oldest
-device-owned candidate data. Records without trustworthy browser ownership are
-assigned a reserved legacy identifier that no browser can receive, quarantining
-them from the user interface. Fresh databases created after this change already
-contain the required columns and indexes; the migration command will report that
-the schema is up to date.
+device-owned candidate data. Historical candidate rows belonging to a different
+device are preserved on a hidden legacy job copy so they cannot block safe job
+management or leak job details. Records without trustworthy browser ownership
+are assigned a reserved legacy identifier that no browser can receive,
+quarantining them from the user interface. Fresh databases created after this
+change already contain the required columns and indexes; the migration command
+will report that the schema is up to date.
 
 Run the device-isolation and security regression tests with:
 

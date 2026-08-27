@@ -1,6 +1,6 @@
 """Idempotent migration for browser/device-isolated screening data."""
 
-from sqlalchemy import inspect, text
+from sqlalchemy import MetaData, Table, and_, inspect, or_, select, text
 
 from app.utils.device import LEGACY_DEVICE_ID
 
@@ -59,6 +59,109 @@ def _usable_device_for_job(connection, columns, job_id, created_by):
             'legacy_device_id': LEGACY_DEVICE_ID,
         }).scalar()
     return None
+
+
+def _quarantine_cross_device_job_records(connection, columns):
+    """Detach historical foreign-device records from an owned job.
+
+    Before jobs became device-owned, multiple browsers could upload against the
+    same job. Preserve those older candidate rows on a hidden legacy job clone
+    so the owning device can manage or delete its job without crossing a device
+    boundary or breaking foreign keys.
+    """
+    required_job_columns = {'id', 'device_id'}
+    if not required_job_columns.issubset(columns.get('jobs', set())):
+        return []
+
+    source_specs = (
+        ('applicants', 'applied_job_id'),
+        ('resumes', 'job_id'),
+        ('screening_results', 'job_id'),
+    )
+    usable_sources = [
+        (table_name, job_column)
+        for table_name, job_column in source_specs
+        if {'id', 'device_id', job_column}.issubset(columns.get(table_name, set()))
+    ]
+    if not usable_sources:
+        return []
+
+    metadata = MetaData()
+    jobs = Table('jobs', metadata, autoload_with=connection)
+    sources = {
+        table_name: Table(table_name, metadata, autoload_with=connection)
+        for table_name, _job_column in usable_sources
+    }
+    criteria = None
+    if {'id', 'device_id', 'job_id'}.issubset(columns.get('screening_criteria', set())):
+        criteria = Table('screening_criteria', metadata, autoload_with=connection)
+
+    changes = []
+    owned_jobs = connection.execute(select(jobs).where(
+        jobs.c.device_id.is_not(None),
+        jobs.c.device_id != '',
+        jobs.c.device_id != LEGACY_DEVICE_ID,
+    )).all()
+
+    for job_row in owned_jobs:
+        job_values = job_row._mapping
+        job_id = job_values['id']
+        owner = job_values['device_id']
+        has_cross_device_records = False
+        for table_name, job_column in usable_sources:
+            source = sources[table_name]
+            cross_device = connection.execute(select(source.c.id).where(
+                source.c[job_column] == job_id,
+                or_(
+                    source.c.device_id.is_(None),
+                    source.c.device_id != owner,
+                ),
+            ).limit(1)).first()
+            if cross_device is not None:
+                has_cross_device_records = True
+                break
+
+        if not has_cross_device_records:
+            continue
+
+        clone_values = {
+            column.name: job_values[column.name]
+            for column in jobs.columns
+            if column.name != 'id'
+        }
+        clone_values['device_id'] = LEGACY_DEVICE_ID
+        inserted = connection.execute(jobs.insert().values(**clone_values))
+        legacy_job_id = inserted.inserted_primary_key[0]
+
+        if criteria is not None:
+            criteria_rows = connection.execute(select(criteria).where(
+                criteria.c.job_id == job_id,
+            )).all()
+            for criteria_row in criteria_rows:
+                criteria_values = {
+                    column.name: criteria_row._mapping[column.name]
+                    for column in criteria.columns
+                    if column.name != 'id'
+                }
+                criteria_values['device_id'] = LEGACY_DEVICE_ID
+                criteria_values['job_id'] = legacy_job_id
+                connection.execute(criteria.insert().values(**criteria_values))
+
+        for table_name, job_column in usable_sources:
+            source = sources[table_name]
+            connection.execute(source.update().where(
+                source.c[job_column] == job_id,
+                or_(
+                    source.c.device_id.is_(None),
+                    source.c.device_id != owner,
+                ),
+            ).values({job_column: legacy_job_id}))
+
+        changes.append(
+            f'quarantined cross-device records for jobs.id={job_id}'
+        )
+
+    return changes
 
 
 def migrate_device_isolation(engine):
@@ -148,5 +251,10 @@ def migrate_device_isolation(engine):
                 f'UPDATE {table} SET device_id = :legacy_device_id '
                 "WHERE device_id IS NULL OR device_id = ''"
             ), {'legacy_device_id': LEGACY_DEVICE_ID})
+
+        changes.extend(_quarantine_cross_device_job_records(
+            connection,
+            current_columns,
+        ))
 
     return changes

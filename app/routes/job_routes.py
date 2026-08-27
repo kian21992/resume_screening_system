@@ -152,7 +152,11 @@ def delete_job(job_id):
     # linked to this job. Preserve them instead of crossing the ownership
     # boundary or violating their foreign keys.
     other_device_data_exists = (
-        Resume.query.filter(
+        Applicant.query.filter(
+            Applicant.applied_job_id == job.id,
+            Applicant.device_id != device_id,
+        ).first() is not None
+        or Resume.query.filter(
             Resume.job_id == job.id,
             Resume.device_id != device_id,
         ).first() is not None

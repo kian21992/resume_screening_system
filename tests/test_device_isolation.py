@@ -413,6 +413,90 @@ class DeviceIsolationMigrationTests(unittest.TestCase):
         self.assertEqual(migrated_job_device, device_id)
         self.assertEqual(migrated_criteria_device, device_id)
 
+    def test_migration_quarantines_historical_cross_device_job_references(self):
+        engine = create_engine('sqlite://')
+        owner_device = 'a' * 64
+        foreign_device = 'b' * 64
+        with engine.begin() as connection:
+            connection.execute(text(
+                'CREATE TABLE jobs ('
+                'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+                'device_id VARCHAR(64), title TEXT, required_skills TEXT'
+                ')'
+            ))
+            connection.execute(text(
+                'CREATE TABLE screening_criteria ('
+                'id INTEGER PRIMARY KEY AUTOINCREMENT, device_id VARCHAR(64), '
+                'job_id INTEGER, min_fit_score FLOAT'
+                ')'
+            ))
+            connection.execute(text(
+                'CREATE TABLE applicants ('
+                'id INTEGER PRIMARY KEY, device_id VARCHAR(64), '
+                'applied_job_id INTEGER'
+                ')'
+            ))
+            connection.execute(text(
+                'CREATE TABLE resumes ('
+                'id INTEGER PRIMARY KEY, device_id VARCHAR(64), job_id INTEGER'
+                ')'
+            ))
+            connection.execute(text(
+                'CREATE TABLE screening_results ('
+                'id INTEGER PRIMARY KEY, device_id VARCHAR(64), job_id INTEGER'
+                ')'
+            ))
+            connection.execute(text(
+                'INSERT INTO jobs '
+                '(id, device_id, title, required_skills) '
+                'VALUES (1, :device_id, \'Shared Before Migration\', \'Python\')'
+            ), {'device_id': owner_device})
+            connection.execute(text(
+                'INSERT INTO screening_criteria '
+                '(id, device_id, job_id, min_fit_score) '
+                'VALUES (2, :device_id, 1, 60)'
+            ), {'device_id': owner_device})
+            for table, job_column in (
+                ('applicants', 'applied_job_id'),
+                ('resumes', 'job_id'),
+                ('screening_results', 'job_id'),
+            ):
+                connection.execute(text(
+                    f'INSERT INTO {table} (id, device_id, {job_column}) '
+                    'VALUES (3, :device_id, 1)'
+                ), {'device_id': foreign_device})
+
+        first_run = migrate_device_isolation(engine)
+        second_run = migrate_device_isolation(engine)
+
+        self.assertIn(
+            'quarantined cross-device records for jobs.id=1',
+            first_run,
+        )
+        self.assertEqual(second_run, [])
+        with engine.connect() as connection:
+            jobs = connection.execute(text(
+                'SELECT id, device_id FROM jobs ORDER BY id'
+            )).all()
+            self.assertEqual(len(jobs), 2)
+            self.assertEqual(jobs[0].device_id, owner_device)
+            self.assertEqual(jobs[1].device_id, LEGACY_DEVICE_ID)
+            legacy_job_id = jobs[1].id
+            criteria = connection.execute(text(
+                'SELECT device_id, job_id FROM screening_criteria '
+                'WHERE job_id = :job_id'
+            ), {'job_id': legacy_job_id}).one()
+            self.assertEqual(criteria.device_id, LEGACY_DEVICE_ID)
+            for table, job_column in (
+                ('applicants', 'applied_job_id'),
+                ('resumes', 'job_id'),
+                ('screening_results', 'job_id'),
+            ):
+                migrated_job_id = connection.execute(text(
+                    f'SELECT {job_column} FROM {table} WHERE id = 3'
+                )).scalar_one()
+                self.assertEqual(migrated_job_id, legacy_job_id)
+
 
 if __name__ == '__main__':
     unittest.main()
