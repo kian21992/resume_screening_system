@@ -94,6 +94,17 @@ class SecurityTests(unittest.TestCase):
             403,
         )
 
+    def test_upload_form_uses_one_mobile_safe_native_file_input(self):
+        self.login_as('hr')
+
+        response = self.client.get('/resume/upload')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.count(b'type="file"'), 1)
+        self.assertIn(b'id="resume-files"', response.data)
+        self.assertNotIn(b'createFreshFileInput', response.data)
+        self.assertNotIn(b"style.display = 'none'", response.data)
+
     def test_role_command_assigns_an_approved_role(self):
         runner = self.app.test_cli_runner()
         result = runner.invoke(args=['set-user-role', 'manager', 'admin'])

@@ -24,13 +24,13 @@
                         <label class="form-label d-block text-center mb-3">Resume Documents <span class="text-danger">*</span></label>
                         <div class="file-upload-wrapper text-center d-flex flex-column align-items-center justify-content-center p-5" id="drop-zone">
                             <div id="file-input-holder">
-                                <input type="file" name="file" class="resume-file-input" accept=".pdf,.docx" multiple required>
+                                <input type="file" id="resume-files" name="file" class="resume-file-input" accept=".pdf,.docx" multiple required>
                             </div>
                             <div class="upload-icon-container mb-3 d-flex align-items-center justify-content-center rounded-circle" style="background: #eef3f8; width: 72px; height: 72px; border: 1px solid #d8dee6;">
                                 <i class="bi bi-cloud-arrow-up text-muted fs-1" id="upload-icon"></i>
                             </div>
                             <h5 class="fw-bold mb-1">Add up to 10 resumes</h5>
-                            <p class="text-muted small mb-0">Click again to add more files to the same screening batch</p>
+                            <p class="text-muted small mb-0">Choose one or more files in the same picker</p>
                             <span class="text-muted mt-2" style="font-size: 0.75rem;">Supports PDF and DOCX</span>
                         </div>
                         <div id="file-name-display" class="selected-file-list mt-3"></div>
@@ -50,40 +50,22 @@
 
 {% block extra_js %}
 <script>
-    const selectedResumeFiles = [];
-    const fileInputHolder = document.getElementById('file-input-holder');
+    const resumeFileInput = document.getElementById('resume-files');
     const fileNameDisplay = document.getElementById('file-name-display');
 
-    function fileKey(file) {
-        return file.name + '|' + file.size + '|' + file.lastModified;
-    }
-
-    function createFreshFileInput() {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.name = 'file';
-        input.className = 'resume-file-input';
-        input.accept = '.pdf,.docx';
-        input.multiple = true;
-        input.required = selectedResumeFiles.length === 0;
-        input.addEventListener('change', handleFileSelection);
-        fileInputHolder.appendChild(input);
-        return input;
-    }
-
-    function renderSelectedFiles() {
+    function renderSelectedFiles(files) {
         fileNameDisplay.innerHTML = '';
 
-        if (selectedResumeFiles.length === 0) {
+        if (files.length === 0) {
             return;
         }
 
         const summary = document.createElement('div');
         summary.className = 'selected-file-summary';
-        summary.innerHTML = '<i class="bi bi-file-earmark-check-fill me-1"></i> ' + selectedResumeFiles.length + ' selected';
+        summary.innerHTML = '<i class="bi bi-file-earmark-check-fill me-1"></i> ' + files.length + ' selected';
         fileNameDisplay.appendChild(summary);
 
-        selectedResumeFiles.forEach(file => {
+        files.forEach(file => {
             const row = document.createElement('div');
             const icon = document.createElement('i');
             const name = document.createElement('span');
@@ -101,35 +83,15 @@
     }
 
     function handleFileSelection(e) {
-        if(e.target.files.length > 0) {
-            const existingKeys = new Set(selectedResumeFiles.map(fileKey));
-            const incomingFiles = Array.from(e.target.files);
-            const uniqueIncomingFiles = incomingFiles.filter(file => !existingKeys.has(fileKey(file)));
+        const files = Array.from(e.target.files || []);
+        if (files.length > 10) {
+            e.target.value = '';
+            fileNameDisplay.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i> You can upload up to 10 resumes per screening.';
+            return;
+        }
 
-            if (uniqueIncomingFiles.length === 0) {
-                e.target.value = '';
-                renderSelectedFiles();
-                return;
-            }
-
-            if (selectedResumeFiles.length + uniqueIncomingFiles.length > 10) {
-                e.target.value = '';
-                fileNameDisplay.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i> You can only add ' + (10 - selectedResumeFiles.length) + ' more resume(s).';
-                return;
-            }
-
-            if (uniqueIncomingFiles.length !== incomingFiles.length) {
-                e.target.value = '';
-                renderSelectedFiles();
-                return;
-            }
-
-            uniqueIncomingFiles.forEach(file => selectedResumeFiles.push(file));
-            e.target.classList.add('stored-file-input');
-            e.target.required = false;
-            e.target.style.display = 'none';
-            createFreshFileInput();
-            renderSelectedFiles();
+        renderSelectedFiles(files);
+        if (files.length > 0) {
             document.querySelector('.file-upload-wrapper').style.borderColor = 'var(--primary-color)';
             document.querySelector('.file-upload-wrapper').style.background = '#f1f5f9';
             document.querySelector('.upload-icon-container').style.background = '#eef3f8';
@@ -138,23 +100,17 @@
         }
     }
 
-    document.querySelector('.resume-file-input').addEventListener('change', handleFileSelection);
+    resumeFileInput.addEventListener('change', handleFileSelection);
 
     document.querySelector('form').addEventListener('submit', function() {
-        if (selectedResumeFiles.length === 0) {
+        if (!resumeFileInput.files.length) {
             return;
         }
-
-        document.querySelectorAll('.resume-file-input').forEach(input => {
-            if (!input.files.length) {
-                input.removeAttribute('name');
-                input.required = false;
-            }
-        });
 
         let btn = document.getElementById('submitBtn');
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Processing Resume Batch...';
         btn.classList.add('disabled');
+        btn.disabled = true;
     });
 </script>
 {% endblock %}
