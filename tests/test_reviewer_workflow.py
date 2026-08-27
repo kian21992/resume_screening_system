@@ -35,6 +35,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         self.app = create_app(ReviewerTestConfig)
         self.context = self.app.app_context()
         self.context.push()
+        self.device_id = "1" * 64
 
         user = User(username="reviewer", password_hash="test", role="hr")
         db.session.add(user)
@@ -51,6 +52,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         db.session.add(job)
         db.session.flush()
         applicant = Applicant(
+            device_id=self.device_id,
             name="Maria Santos",
             email="maria@example.com",
             phone="09171234567",
@@ -59,6 +61,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         db.session.add(applicant)
         db.session.flush()
         resume = Resume(
+            device_id=self.device_id,
             applicant_id=applicant.id,
             job_id=job.id,
             uploaded_by=user.id,
@@ -74,6 +77,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         db.session.add(resume)
         db.session.flush()
         result = ScreeningResult(
+            device_id=self.device_id,
             resume_id=resume.id,
             applicant_id=applicant.id,
             job_id=job.id,
@@ -93,6 +97,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         db.session.flush()
 
         second_applicant = Applicant(
+            device_id=self.device_id,
             name="Ana Reyes",
             email="ana@example.com",
             phone="09181234567",
@@ -101,6 +106,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         db.session.add(second_applicant)
         db.session.flush()
         second_resume = Resume(
+            device_id=self.device_id,
             applicant_id=second_applicant.id,
             job_id=job.id,
             filename="ana.docx",
@@ -111,6 +117,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         db.session.add(second_resume)
         db.session.flush()
         second_result = ScreeningResult(
+            device_id=self.device_id,
             resume_id=second_resume.id,
             applicant_id=second_applicant.id,
             job_id=job.id,
@@ -137,6 +144,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["_user_id"] = str(self.user_id)
             session["_fresh"] = True
+            session["device_id"] = self.device_id
 
     def tearDown(self):
         db.session.remove()
@@ -253,6 +261,19 @@ Unique State College
         self.assertNotIn("Matter knowledge", stored_skills)
         self.assertNotIn("Processes", stored_skills)
 
+        applicant = db.session.get(Applicant, uploaded.applicant_id)
+        result = ScreeningResult.query.filter_by(resume_id=uploaded.id).one()
+        logs = RecommendationLog.query.filter_by(result_id=result.id).all()
+        self.assertEqual(uploaded.device_id, self.device_id)
+        self.assertEqual(applicant.device_id, self.device_id)
+        self.assertEqual(result.device_id, self.device_id)
+        self.assertTrue(logs)
+        self.assertTrue(all(log.device_id == self.device_id for log in logs))
+        self.assertTrue(all(
+            row.device_id == self.device_id
+            for row in ExtractedSkill.query.filter_by(resume_id=uploaded.id).all()
+        ))
+
     def test_results_page_filters_by_reviewer_decision(self):
         response = self.client.get("/screening_results?reviewer_status=Rejected")
         self.assertEqual(response.status_code, 200)
@@ -264,11 +285,13 @@ Unique State College
     def test_duplicate_resume_is_detected_from_identity_and_work_history(self):
         resume = Resume.query.filter_by(filename="maria.docx").first()
         db.session.add(ExtractedEducation(
+            device_id=self.device_id,
             resume_id=resume.id,
             degree="Bachelor of Education",
             institution="State University",
         ))
         db.session.add(ExtractedExperience(
+            device_id=self.device_id,
             resume_id=resume.id,
             job_title="Teacher",
             company="Sample School",
@@ -299,6 +322,7 @@ Unique State College
         duplicate = _find_duplicate_resume(
             "Maria Santos\nTeacher\nSample School\nJanuary 2020 - January 2024",
             evaluation,
+            device_id=self.device_id,
         )
 
         self.assertIsNotNone(duplicate)
@@ -318,6 +342,7 @@ Unique State College
         duplicate = _find_duplicate_resume(
             "Maria Santos Skills Classroom Management Professional Experience Teacher at Sample School January 2020 January 2024 Education Bachelor of Education",
             evaluation,
+            device_id=self.device_id,
         )
 
         self.assertIsNotNone(duplicate)
@@ -337,6 +362,7 @@ Unique State College
         duplicate = _find_duplicate_resume(
             "Different PDF text layout, but the same candidate email appears.",
             evaluation,
+            device_id=self.device_id,
         )
 
         self.assertIsNotNone(duplicate)
@@ -379,6 +405,7 @@ Unique State College
         lowest_result_id = None
         for index in range(21):
             applicant = Applicant(
+                device_id=self.device_id,
                 name=f"Load Candidate {index:02d}",
                 email=f"load{index:02d}@example.com",
                 phone=f"0919{index:07d}",
@@ -387,6 +414,7 @@ Unique State College
             db.session.add(applicant)
             db.session.flush()
             resume = Resume(
+                device_id=self.device_id,
                 applicant_id=applicant.id,
                 job_id=self.job_id,
                 uploaded_by=self.user_id,
@@ -398,6 +426,7 @@ Unique State College
             db.session.add(resume)
             db.session.flush()
             result = ScreeningResult(
+                device_id=self.device_id,
                 resume_id=resume.id,
                 applicant_id=applicant.id,
                 job_id=self.job_id,

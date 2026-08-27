@@ -20,6 +20,7 @@ from app.utils.files import (
     unique_upload_filename,
 )
 from app.utils.authorization import roles_required
+from app.utils.device import current_device_id
 
 resume_bp = Blueprint('resume', __name__)
 
@@ -53,12 +54,13 @@ def _file_sha256(filepath):
             digest.update(chunk)
     return digest.hexdigest()
 
-def _find_duplicate_file(saved_filepath):
+def _find_duplicate_file(saved_filepath, device_id=None):
     if not os.path.exists(saved_filepath):
         return None
 
+    owner = device_id or current_device_id()
     uploaded_hash = _file_sha256(saved_filepath)
-    for existing_resume in Resume.query.all():
+    for existing_resume in Resume.query.filter_by(device_id=owner).all():
         if not existing_resume.filepath or not os.path.exists(existing_resume.filepath):
             continue
         if os.path.abspath(existing_resume.filepath) == os.path.abspath(saved_filepath):
@@ -104,7 +106,8 @@ def _education_signature(records):
 def _resume_text_signature(text):
     return _normalize_duplicate_text(text)
 
-def _find_duplicate_resume(extracted_text, evaluation):
+def _find_duplicate_resume(extracted_text, evaluation, device_id=None):
+    owner = device_id or current_device_id()
     contact_info = evaluation.get('contact_info') or {}
     email = _clean_identity_value(contact_info.get('email'))
     phone = _normalize_phone(contact_info.get('phone'))
@@ -113,8 +116,11 @@ def _find_duplicate_resume(extracted_text, evaluation):
     edu_sig = _education_signature(evaluation.get('extracted_edu'))
     text_sig = _resume_text_signature(extracted_text)
 
-    for existing_resume in Resume.query.all():
-        existing_applicant = Applicant.query.get(existing_resume.applicant_id)
+    for existing_resume in Resume.query.filter_by(device_id=owner).all():
+        existing_applicant = Applicant.query.filter_by(
+            id=existing_resume.applicant_id,
+            device_id=owner,
+        ).first()
         if not existing_applicant:
             continue
 
@@ -132,10 +138,16 @@ def _find_duplicate_resume(extracted_text, evaluation):
         )
 
         existing_exp_sig = _experience_signature(
-            ExtractedExperience.query.filter_by(resume_id=existing_resume.id).all()
+            ExtractedExperience.query.filter_by(
+                resume_id=existing_resume.id,
+                device_id=owner,
+            ).all()
         )
         existing_edu_sig = _education_signature(
-            ExtractedEducation.query.filter_by(resume_id=existing_resume.id).all()
+            ExtractedEducation.query.filter_by(
+                resume_id=existing_resume.id,
+                device_id=owner,
+            ).all()
         )
 
         same_structured_resume = (
@@ -159,7 +171,10 @@ def _find_duplicate_resume(extracted_text, evaluation):
     return None
 
 def _duplicate_resume_message(uploaded_filename, duplicate_resume):
-    applicant = Applicant.query.get(duplicate_resume.applicant_id)
+    applicant = Applicant.query.filter_by(
+        id=duplicate_resume.applicant_id,
+        device_id=duplicate_resume.device_id,
+    ).first()
     job = JobDescription.query.get(duplicate_resume.job_id)
     candidate_name = applicant.name if applicant else 'Unknown Candidate'
     job_title = job.title if job else 'Unknown Job'
@@ -170,6 +185,7 @@ def _duplicate_resume_message(uploaded_filename, duplicate_resume):
     )
 
 def process_resume_file(file, job):
+    device_id = current_device_id()
     filename = unique_upload_filename(file.filename)
     try:
         upload_timezone = ZoneInfo(current_app.config.get('DISPLAY_TIMEZONE', 'Asia/Manila'))
@@ -186,7 +202,7 @@ def process_resume_file(file, job):
     file.save(save_path)
 
     try:
-        duplicate_file = _find_duplicate_file(save_path)
+        duplicate_file = _find_duplicate_file(save_path, device_id=device_id)
         if duplicate_file:
             safe_delete_uploaded_file(
                 save_path,
@@ -228,7 +244,11 @@ def process_resume_file(file, job):
         )
 
         contact_info = evaluation['contact_info']
-        duplicate_resume = _find_duplicate_resume(extracted_text, evaluation)
+        duplicate_resume = _find_duplicate_resume(
+            extracted_text,
+            evaluation,
+            device_id=device_id,
+        )
         if duplicate_resume:
             safe_delete_uploaded_file(
                 save_path,
@@ -238,6 +258,7 @@ def process_resume_file(file, job):
             return False, _duplicate_resume_message(file.filename, duplicate_resume)
 
         applicant = Applicant(
+            device_id=device_id,
             name=contact_info['name'],
             email=contact_info['email'],
             phone=contact_info['phone'],
@@ -247,6 +268,7 @@ def process_resume_file(file, job):
         db.session.flush()
 
         resume = Resume(
+            device_id=device_id,
             applicant_id=applicant.id,
             job_id=job.id,
             uploaded_by=current_user.id,
@@ -261,10 +283,15 @@ def process_resume_file(file, job):
         # Store the complete independently extracted skill inventory, not only
         # the subset that matched this job's configured requirements.
         for skill_name in evaluation['extracted_skills']:
-            db.session.add(ExtractedSkill(resume_id=resume.id, skill_name=skill_name))
+            db.session.add(ExtractedSkill(
+                device_id=device_id,
+                resume_id=resume.id,
+                skill_name=skill_name,
+            ))
 
         for edu in evaluation['extracted_edu']:
             db.session.add(ExtractedEducation(
+                device_id=device_id,
                 resume_id=resume.id,
                 degree=edu['degree'],
                 institution=edu['institution']
@@ -272,6 +299,7 @@ def process_resume_file(file, job):
 
         for exp in evaluation['extracted_exp']:
             db.session.add(ExtractedExperience(
+                device_id=device_id,
                 resume_id=resume.id,
                 job_title=exp['job_title'],
                 company=exp['company'],
@@ -281,6 +309,7 @@ def process_resume_file(file, job):
 
         for credential in evaluation['extracted_certifications']:
             db.session.add(ExtractedCertification(
+                device_id=device_id,
                 resume_id=resume.id,
                 certification_name=credential['certification_name'],
                 credential_type=credential['credential_type'],
@@ -289,6 +318,7 @@ def process_resume_file(file, job):
             ))
 
         result = ScreeningResult(
+            device_id=device_id,
             resume_id=resume.id,
             applicant_id=applicant.id,
             job_id=job.id,
@@ -310,7 +340,11 @@ def process_resume_file(file, job):
         db.session.add(result)
         db.session.flush()
 
-        log = RecommendationLog(result_id=result.id, log_text=f"Auto-screened: {evaluation['summary']}")
+        log = RecommendationLog(
+            device_id=device_id,
+            result_id=result.id,
+            log_text=f"Auto-screened: {evaluation['summary']}",
+        )
         db.session.add(log)
 
         return True, f'{file.filename}: {evaluation["recommendation_label"]}'

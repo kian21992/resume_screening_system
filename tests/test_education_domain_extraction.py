@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from app.services.education_domain import (
+    EDUCATION_SKILL_CATALOG,
     classify_combined_heading,
     classify_section_heading,
     extract_education_entities,
@@ -12,7 +13,7 @@ from app.services.education_domain import (
 from app.services.nlp_pipeline import extract_education, extract_experience_records
 from app.services.nlp_pipeline import extract_contact_info, extract_certifications
 from app.services.extractor import _clean_extracted_text, extract_text_from_docx
-from app.services.recommender import extract_resume_skills
+from app.services.recommender import analyze_skills, extract_resume_skills
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "education_resume_cases.json"
@@ -41,6 +42,72 @@ def test_hybrid_education_entities_include_evidence_and_confidence():
     entity_types = {entity["type"] for entity in entities}
     assert {"education_role", "grade_level", "subject", "education_skill", "license"}.issubset(entity_types)
     assert all(entity["evidence"] and entity["confidence"] in {"high", "medium"} for entity in entities)
+
+
+def test_teaching_skill_catalog_covers_pedagogy_and_subject_instruction():
+    expected = {
+        "Instructional Strategies",
+        "Test Construction",
+        "Universal Design for Learning",
+        "Reading Intervention",
+        "Mathematics Instruction",
+        "Science Instruction",
+        "Filipino Language Instruction",
+        "Araling Panlipunan Instruction",
+        "TLE Instruction",
+        "MAPEH Instruction",
+    }
+    assert expected.issubset(EDUCATION_SKILL_CATALOG)
+    aliases = {
+        alias.casefold()
+        for variants in EDUCATION_SKILL_CATALOG.values()
+        for alias in variants
+    }
+    assert "student feedback" not in aliases
+    assert "remediation" not in aliases
+    assert "enrichment activities" not in aliases
+    assert len(aliases) < 100
+
+
+def test_teaching_aliases_emit_canonical_education_entities():
+    entities = extract_education_entities(
+        "TEACHING COMPETENCIES\n"
+        "Inquiry based teaching; UDL; assessment rubric development;\n"
+        "teaching mathematics; AP teaching; TLE teaching; teaching Filipino"
+    )
+    extracted = {
+        entity["name"] for entity in entities
+        if entity["type"] == "education_skill"
+    }
+    assert {
+        "Inquiry-Based Learning",
+        "Universal Design for Learning",
+        "Rubric Development",
+        "Mathematics Instruction",
+        "Araling Panlipunan Instruction",
+        "TLE Instruction",
+        "Filipino Language Instruction",
+    }.issubset(extracted)
+
+
+def test_teaching_aliases_are_used_for_job_skill_matching():
+    resume = """SKILLS
+Inquiry based teaching
+Assessment rubric development
+Teaching mathematics
+AP teaching
+TLE teaching
+"""
+    required = [
+        "Inquiry-Based Learning",
+        "Rubric Development",
+        "Mathematics Instruction",
+        "Araling Panlipunan Instruction",
+        "TLE Instruction",
+    ]
+    matched, missing = analyze_skills(resume, required)
+    assert matched == required
+    assert missing == []
 
 
 def test_structured_validators_reject_noise_but_allow_unknown_employer():

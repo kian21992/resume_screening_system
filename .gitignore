@@ -3,6 +3,7 @@
 !.env.example
 
 venv/
+venv_old/
 .venv/
 env/
 
@@ -12,6 +13,8 @@ __pycache__/
 
 instance/
 uploads/
+outputs/
+tmp/
 *.db
 *.sqlite
 *.sqlite3

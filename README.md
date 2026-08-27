@@ -119,6 +119,75 @@ the deployment runs multiple workers. If the application is behind a reverse
 proxy, configure trusted proxy handling at the hosting layer so the application
 receives the correct client address.
 
+## Device-isolated resume data
+
+Each browser profile receives a random 256-bit `device_id` in Flask's signed,
+persistent session cookie. Applicants, resumes, extracted fields, screening
+results, recommendations, rankings, duplicate checks, dashboard totals, and
+executive-summary totals are scoped to that identifier on the server. Jobs and
+screening criteria remain shared configuration.
+
+The identifier survives login/logout and normal browser restarts. Clearing site
+cookies or using private browsing creates a new device identity, so the previous
+browser's records will no longer be visible from that browser profile. Copying a
+valid session cookie also copies its device identity; always use HTTPS and keep
+`SECRET_KEY` private in production.
+
+Before starting an upgraded installation against an existing database, back up
+the database and run the idempotent migration:
+
+```bash
+python -m flask --app app migrate-device-isolation
+```
+
+Historical records do not contain trustworthy browser ownership information.
+The migration therefore assigns them a reserved legacy identifier that no
+browser can receive, quarantining them from the user interface. Fresh databases
+created after this change already contain the required columns and indexes; the
+migration command will report that the schema is up to date.
+
+Run the device-isolation and security regression tests with:
+
+```bash
+python -m pytest -q tests/test_device_isolation.py tests/test_security.py tests/test_reviewer_workflow.py
+```
+
+Run the complete test suite with:
+
+```bash
+python -m pytest -q
+```
+
+## Render thesis deployment
+
+The repository includes a `render.yaml` Blueprint for a free, temporary thesis
+deployment in Render's Singapore region. It provisions one Flask web service
+and one private Render Postgres database. Render prompts for these secrets when
+you create the Blueprint:
+
+- `INITIAL_ADMIN_USERNAME`
+- `INITIAL_ADMIN_PASSWORD` (at least 12 characters)
+
+The deployment generates `SECRET_KEY`, installs the pinned spaCy model and NLTK
+data, runs the device-isolation migration, creates the initial administrator
+only when it is missing, and starts the application with Gunicorn.
+
+To deploy:
+
+1. Commit and push the repository to GitHub.
+2. In Render, choose **New > Blueprint** and connect this repository.
+3. Keep the `main` branch and `render.yaml` path selected.
+4. Enter a private initial administrator username and password when prompted.
+5. Apply the Blueprint and wait for both the database and web service to become
+   available.
+6. Open the generated `onrender.com` URL and sign in with the administrator.
+
+The free web service has an ephemeral filesystem. Uploaded resume files remain
+on the server only until Render restarts or redeploys the instance, although
+database-backed extracted text and screening results remain until the free
+database expires. Use only synthetic resumes for this thesis demo. Upgrade the
+web service and attach a persistent disk before storing real applicant files.
+
 ## Notes
 
 Local files such as `.env`, `venv/`, uploaded resumes, cache files, and the SQLite database are intentionally not uploaded to GitHub. They are created on each computer during setup and use.

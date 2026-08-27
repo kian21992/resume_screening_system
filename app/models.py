@@ -36,6 +36,7 @@ class ScreeningCriteria(db.Model):
 class Applicant(db.Model):
     __tablename__ = 'applicants'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), nullable=True)
     phone = db.Column(db.String(50), nullable=True)
@@ -45,6 +46,7 @@ class Applicant(db.Model):
 class Resume(db.Model):
     __tablename__ = 'resumes'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     applicant_id = db.Column(db.Integer, db.ForeignKey('applicants.id'), nullable=False)
     job_id = db.Column(db.Integer, db.ForeignKey('jobs.id'), nullable=False)
     uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
@@ -59,12 +61,14 @@ class Resume(db.Model):
 class ExtractedSkill(db.Model):
     __tablename__ = 'extracted_skills'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     resume_id = db.Column(db.Integer, db.ForeignKey('resumes.id'), nullable=False)
     skill_name = db.Column(db.String(150), nullable=False)
 
 class ExtractedEducation(db.Model):
     __tablename__ = 'extracted_education'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     resume_id = db.Column(db.Integer, db.ForeignKey('resumes.id'), nullable=False)
     degree = db.Column(db.String(255), nullable=True)
     institution = db.Column(db.String(255), nullable=True)
@@ -72,6 +76,7 @@ class ExtractedEducation(db.Model):
 class ExtractedExperience(db.Model):
     __tablename__ = 'extracted_experience'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     resume_id = db.Column(db.Integer, db.ForeignKey('resumes.id'), nullable=False)
     job_title = db.Column(db.String(255), nullable=True)
     company = db.Column(db.String(255), nullable=True)
@@ -81,6 +86,7 @@ class ExtractedExperience(db.Model):
 class ExtractedCertification(db.Model):
     __tablename__ = 'extracted_certifications'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     resume_id = db.Column(db.Integer, db.ForeignKey('resumes.id'), nullable=False)
     certification_name = db.Column(db.String(255), nullable=False)
     credential_type = db.Column(db.String(50), nullable=False, default='Certification')
@@ -99,6 +105,7 @@ class ScreeningResult(db.Model):
     CONFIDENCE_LEVELS = ('High', 'Medium', 'Low')
 
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     resume_id = db.Column(db.Integer, db.ForeignKey('resumes.id'), nullable=False)
     applicant_id = db.Column(db.Integer, db.ForeignKey('applicants.id'), nullable=False)
     job_id = db.Column(db.Integer, db.ForeignKey('jobs.id'), nullable=False)
@@ -155,6 +162,7 @@ class ScreeningResult(db.Model):
 class RecommendationLog(db.Model):
     __tablename__ = 'recommendation_logs'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     result_id = db.Column(db.Integer, db.ForeignKey('screening_results.id'), nullable=False)
     log_text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

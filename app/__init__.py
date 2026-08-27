@@ -1,4 +1,4 @@
-from flask import Flask, render_template
+from flask import Flask, abort, render_template, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_bcrypt import Bcrypt
@@ -86,6 +86,16 @@ def create_app(config_class=Config):
     def inject_display_timezone():
         return {'display_timezone': app.config.get('DISPLAY_TIMEZONE', 'Asia/Manila')}
 
+    @app.before_request
+    def establish_device_identity():
+        from app.utils.device import current_device_id
+
+        # Old versions stored some uploads below Flask's public static folder.
+        # They must never bypass the device-scoped database authorization.
+        if request.path.startswith('/static/uploads/'):
+            abort(404)
+        current_device_id()
+
     @app.errorhandler(CSRFError)
     def handle_csrf_error(error):
         return render_template(
@@ -127,6 +137,56 @@ def create_app(config_class=Config):
         user.role = role
         db.session.commit()
         click.echo(f'Updated {username} to role: {role}')
+
+    @app.cli.command('migrate-device-isolation')
+    def migrate_device_isolation_command():
+        """Add and backfill device ownership columns on an existing database."""
+        from migrations.device_isolation import migrate_device_isolation
+
+        changes = migrate_device_isolation(db.engine)
+        if changes:
+            for change in changes:
+                click.echo(change)
+        else:
+            click.echo('Device-isolation schema is already up to date.')
+
+    @app.cli.command('bootstrap-admin')
+    def bootstrap_admin_command():
+        """Create the initial production administrator from environment secrets."""
+        from app.models import User
+
+        username = (os.environ.get('INITIAL_ADMIN_USERNAME') or '').strip()
+        password = os.environ.get('INITIAL_ADMIN_PASSWORD') or ''
+
+        if not username:
+            raise click.ClickException('INITIAL_ADMIN_USERNAME is required.')
+        if len(username) > 150:
+            raise click.ClickException(
+                'INITIAL_ADMIN_USERNAME must be 150 characters or fewer.'
+            )
+        if len(password) < 12:
+            raise click.ClickException(
+                'INITIAL_ADMIN_PASSWORD must contain at least 12 characters.'
+            )
+
+        existing = User.query.filter_by(username=username).first()
+        if existing is not None:
+            if existing.role != 'admin':
+                raise click.ClickException(
+                    'The configured initial administrator already exists with '
+                    'a non-admin role.'
+                )
+            click.echo(f'Initial administrator already exists: {username}')
+            return
+
+        user = User(
+            username=username,
+            password_hash=bcrypt.generate_password_hash(password).decode('utf-8'),
+            role='admin',
+        )
+        db.session.add(user)
+        db.session.commit()
+        click.echo(f'Created initial administrator: {username}')
 
     with app.app_context():
         # Make sure uploads folder exists

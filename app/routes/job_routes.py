@@ -10,6 +10,7 @@ from app.models import (
 )
 from app.utils.files import safe_delete_uploaded_file
 from app.utils.authorization import roles_required
+from app.utils.device import current_device_id
 
 job_bp = Blueprint('job', __name__)
 
@@ -125,28 +126,54 @@ def view_job(job_id):
 @roles_required('admin')
 def delete_job(job_id):
     job = JobDescription.query.get_or_404(job_id)
+    device_id = current_device_id()
+
+    # Jobs are shared configuration, while candidate data is device-owned.
+    # Never let one browser's job deletion cascade into another browser's data.
+    other_device_data_exists = (
+        Resume.query.filter(
+            Resume.job_id == job.id,
+            Resume.device_id != device_id,
+        ).first() is not None
+        or ScreeningResult.query.filter(
+            ScreeningResult.job_id == job.id,
+            ScreeningResult.device_id != device_id,
+        ).first() is not None
+    )
+    if other_device_data_exists:
+        flash(
+            'This shared job cannot be deleted while protected candidate records exist.',
+            'danger',
+        )
+        return redirect(url_for('job.view_job', job_id=job.id))
     
     # 1. Get resumes to remove physical files and delete from extracted fields
-    resumes = Resume.query.filter_by(job_id=job.id).all()
+    resumes = Resume.query.filter_by(job_id=job.id, device_id=device_id).all()
     resume_ids = [r.id for r in resumes]
     
     # 2. Get screening results to delete logs
-    results = ScreeningResult.query.filter_by(job_id=job.id).all()
+    results = ScreeningResult.query.filter_by(job_id=job.id, device_id=device_id).all()
     result_ids = [res.id for res in results]
     
     # 3. Delete from recommendation_logs
     if result_ids:
-        RecommendationLog.query.filter(RecommendationLog.result_id.in_(result_ids)).delete(synchronize_session=False)
+        RecommendationLog.query.filter(
+            RecommendationLog.result_id.in_(result_ids),
+            RecommendationLog.device_id == device_id,
+        ).delete(synchronize_session=False)
         
     # 4. Delete from screening_results
-    ScreeningResult.query.filter_by(job_id=job.id).delete(synchronize_session=False)
+    ScreeningResult.query.filter_by(
+        job_id=job.id,
+        device_id=device_id,
+    ).delete(synchronize_session=False)
     
     # 5. Delete from extracted_skills, extracted_education, extracted_experience
     if resume_ids:
-        ExtractedSkill.query.filter(ExtractedSkill.resume_id.in_(resume_ids)).delete(synchronize_session=False)
-        ExtractedEducation.query.filter(ExtractedEducation.resume_id.in_(resume_ids)).delete(synchronize_session=False)
-        ExtractedExperience.query.filter(ExtractedExperience.resume_id.in_(resume_ids)).delete(synchronize_session=False)
-        ExtractedCertification.query.filter(ExtractedCertification.resume_id.in_(resume_ids)).delete(synchronize_session=False)
+        ExtractedSkill.query.filter(ExtractedSkill.resume_id.in_(resume_ids), ExtractedSkill.device_id == device_id).delete(synchronize_session=False)
+        ExtractedEducation.query.filter(ExtractedEducation.resume_id.in_(resume_ids), ExtractedEducation.device_id == device_id).delete(synchronize_session=False)
+        ExtractedExperience.query.filter(ExtractedExperience.resume_id.in_(resume_ids), ExtractedExperience.device_id == device_id).delete(synchronize_session=False)
+        ExtractedCertification.query.filter(ExtractedCertification.resume_id.in_(resume_ids), ExtractedCertification.device_id == device_id).delete(synchronize_session=False)
         
     # 6. Delete physical resume files from disk
     for r in resumes:
@@ -161,10 +188,13 @@ def delete_job(job_id):
                 pass
                 
     # 7. Delete from resumes
-    Resume.query.filter_by(job_id=job.id).delete(synchronize_session=False)
+    Resume.query.filter_by(job_id=job.id, device_id=device_id).delete(synchronize_session=False)
     
     # 8. Delete from applicants
-    Applicant.query.filter_by(applied_job_id=job.id).delete(synchronize_session=False)
+    Applicant.query.filter_by(
+        applied_job_id=job.id,
+        device_id=device_id,
+    ).delete(synchronize_session=False)
     
     # 9. Delete from screening_criteria
     ScreeningCriteria.query.filter_by(job_id=job.id).delete(synchronize_session=False)

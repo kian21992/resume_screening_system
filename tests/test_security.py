@@ -100,6 +100,39 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(db.session.get(User, self.users['manager']).role, 'admin')
 
+    def test_bootstrap_admin_command_creates_an_idempotent_production_admin(self):
+        runner = self.app.test_cli_runner()
+        command_env = {
+            'INITIAL_ADMIN_USERNAME': 'deployed-admin',
+            'INITIAL_ADMIN_PASSWORD': 'strong-deployment-password',
+        }
+
+        first = runner.invoke(args=['bootstrap-admin'], env=command_env)
+        second = runner.invoke(args=['bootstrap-admin'], env=command_env)
+
+        self.assertEqual(first.exit_code, 0, first.output)
+        self.assertEqual(second.exit_code, 0, second.output)
+        user = User.query.filter_by(username='deployed-admin').one()
+        self.assertEqual(user.role, 'admin')
+        self.assertTrue(bcrypt.check_password_hash(
+            user.password_hash,
+            command_env['INITIAL_ADMIN_PASSWORD'],
+        ))
+        self.assertEqual(User.query.filter_by(username='deployed-admin').count(), 1)
+
+    def test_bootstrap_admin_command_rejects_a_weak_password(self):
+        result = self.app.test_cli_runner().invoke(
+            args=['bootstrap-admin'],
+            env={
+                'INITIAL_ADMIN_USERNAME': 'deployed-admin',
+                'INITIAL_ADMIN_PASSWORD': 'too-short',
+            },
+        )
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn('at least 12 characters', result.output)
+        self.assertIsNone(User.query.filter_by(username='deployed-admin').first())
+
     def test_production_requires_a_strong_secret(self):
         with self.assertRaises(RuntimeError):
             resolve_secret_key('production', '')

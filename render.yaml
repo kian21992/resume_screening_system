@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: resume-screening-system-thesis
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: bash scripts/render_build.sh
+    startCommand: bash scripts/render_start.sh
+    healthCheckPath: /login
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: resume-screening-db
+          property: connectionString
+      - key: UPLOAD_FOLDER
+        value: /tmp/resume-screening-uploads
+      - key: DISPLAY_TIMEZONE
+        value: Asia/Manila
+      - key: DEVICE_COOKIE_DAYS
+        value: "3650"
+      - key: NLTK_DATA
+        value: /opt/render/project/src/nltk_data
+      - key: RATELIMIT_STORAGE_URI
+        value: memory://
+      - key: INITIAL_ADMIN_USERNAME
+        sync: false
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false
+
+databases:
+  - name: resume-screening-db
+    plan: free
+    region: singapore
+    databaseName: resume_screening
+    user: resume_screening_user
+    postgresMajorVersion: "16"
+    ipAllowList: []

@@ -13,6 +13,7 @@ from app.services.evidence import build_candidate_evidence
 from app.services.recommender import analyze_preferred_skills, extract_resume_skills
 from app.utils.files import safe_delete_uploaded_file
 from app.utils.authorization import roles_required
+from app.utils.device import current_device_id
 
 screening_bp = Blueprint('screening', __name__)
 
@@ -27,6 +28,7 @@ def _screening_filter_args():
     return job_id, reviewer_status
 
 def _apply_screening_filters(query, job_id=None, reviewer_status=''):
+    query = query.filter(ScreeningResult.device_id == current_device_id())
     if job_id:
         query = query.filter_by(job_id=job_id)
     if reviewer_status:
@@ -85,12 +87,22 @@ def screening_results():
 @screening_bp.route('/screening_results/<int:result_id>')
 @login_required
 def result_detail(result_id):
+    device_id = current_device_id()
     job_id, reviewer_status = _screening_filter_args()
     sort = _screening_sort_arg()
-    result = ScreeningResult.query.get_or_404(result_id)
-    applicant = Applicant.query.get(result.applicant_id)
+    result = ScreeningResult.query.filter_by(
+        id=result_id,
+        device_id=device_id,
+    ).first_or_404()
+    applicant = Applicant.query.filter_by(
+        id=result.applicant_id,
+        device_id=device_id,
+    ).first_or_404()
     job = JobDescription.query.get(result.job_id)
-    resume = Resume.query.get(result.resume_id)
+    resume = Resume.query.filter_by(
+        id=result.resume_id,
+        device_id=device_id,
+    ).first_or_404()
     previous_result, next_result, candidate_position, candidate_total = _candidate_navigation(
         result.id,
         job_id,
@@ -99,10 +111,22 @@ def result_detail(result_id):
     )
     
     # Query extracted metadata
-    education = ExtractedEducation.query.filter_by(resume_id=resume.id).all()
-    experience = ExtractedExperience.query.filter_by(resume_id=resume.id).all()
-    certifications = ExtractedCertification.query.filter_by(resume_id=resume.id).all()
-    stored_skills = ExtractedSkill.query.filter_by(resume_id=resume.id).all()
+    education = ExtractedEducation.query.filter_by(
+        resume_id=resume.id,
+        device_id=device_id,
+    ).all()
+    experience = ExtractedExperience.query.filter_by(
+        resume_id=resume.id,
+        device_id=device_id,
+    ).all()
+    certifications = ExtractedCertification.query.filter_by(
+        resume_id=resume.id,
+        device_id=device_id,
+    ).all()
+    stored_skills = ExtractedSkill.query.filter_by(
+        resume_id=resume.id,
+        device_id=device_id,
+    ).all()
     preferred_skills = [
         skill.strip() for skill in (job.preferred_skills or '').split(',')
         if skill.strip()
@@ -160,7 +184,11 @@ def result_detail(result_id):
 @login_required
 @roles_required('hr', 'manager', 'admin')
 def update_review(result_id):
-    result = ScreeningResult.query.get_or_404(result_id)
+    device_id = current_device_id()
+    result = ScreeningResult.query.filter_by(
+        id=result_id,
+        device_id=device_id,
+    ).first_or_404()
     reviewer_status = (request.form.get('reviewer_status') or '').strip()
     reviewer_notes = (request.form.get('reviewer_notes') or '').strip()
 
@@ -179,7 +207,11 @@ def update_review(result_id):
     log_text = f'Human review updated by {current_user.username}: {reviewer_status}.'
     if reviewer_notes:
         log_text += f' Notes: {reviewer_notes}'
-    db.session.add(RecommendationLog(result_id=result.id, log_text=log_text))
+    db.session.add(RecommendationLog(
+        device_id=device_id,
+        result_id=result.id,
+        log_text=log_text,
+    ))
     db.session.commit()
 
     flash('Reviewer decision and notes saved.', 'success')
@@ -194,16 +226,23 @@ def update_review(result_id):
 @login_required
 @roles_required('admin')
 def delete_candidate(result_id):
-    result = ScreeningResult.query.get_or_404(result_id)
+    device_id = current_device_id()
+    result = ScreeningResult.query.filter_by(
+        id=result_id,
+        device_id=device_id,
+    ).first_or_404()
     job_id = result.job_id
     applicant_id = result.applicant_id
     resume_id = result.resume_id
     
     # 1. Delete recommendation logs
-    RecommendationLog.query.filter_by(result_id=result_id).delete(synchronize_session=False)
+    RecommendationLog.query.filter_by(
+        result_id=result_id,
+        device_id=device_id,
+    ).delete(synchronize_session=False)
     
     # 2. Delete physical resume file
-    resume = Resume.query.get(resume_id)
+    resume = Resume.query.filter_by(id=resume_id, device_id=device_id).first()
     if resume:
         if resume.filepath:
             try:
@@ -216,10 +255,10 @@ def delete_candidate(result_id):
                 pass
                 
         # 3. Delete extracted details
-        ExtractedSkill.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
-        ExtractedEducation.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
-        ExtractedExperience.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
-        ExtractedCertification.query.filter_by(resume_id=resume_id).delete(synchronize_session=False)
+        ExtractedSkill.query.filter_by(resume_id=resume_id, device_id=device_id).delete(synchronize_session=False)
+        ExtractedEducation.query.filter_by(resume_id=resume_id, device_id=device_id).delete(synchronize_session=False)
+        ExtractedExperience.query.filter_by(resume_id=resume_id, device_id=device_id).delete(synchronize_session=False)
+        ExtractedCertification.query.filter_by(resume_id=resume_id, device_id=device_id).delete(synchronize_session=False)
         
         # 4. Delete Resume DB record
         db.session.delete(resume)
@@ -228,7 +267,7 @@ def delete_candidate(result_id):
     db.session.delete(result)
     
     # 6. Delete Applicant DB record
-    applicant = Applicant.query.get(applicant_id)
+    applicant = Applicant.query.filter_by(id=applicant_id, device_id=device_id).first()
     if applicant:
         db.session.delete(applicant)
         
@@ -244,13 +283,14 @@ def delete_candidate(result_id):
 @login_required
 @roles_required('admin')
 def delete_all_candidates():
+    device_id = current_device_id()
     job_id = request.args.get('job_id', type=int)
     reviewer_status = (request.args.get('reviewer_status') or '').strip()
     if reviewer_status not in ScreeningResult.REVIEW_STATUSES:
         reviewer_status = ''
     
     # Query targets
-    result_query = ScreeningResult.query
+    result_query = ScreeningResult.query.filter_by(device_id=device_id)
     if job_id:
         result_query = result_query.filter_by(job_id=job_id)
     if reviewer_status:
@@ -261,23 +301,35 @@ def delete_all_candidates():
     applicant_ids = [res.applicant_id for res in results]
     result_ids = [res.id for res in results]
 
-    resumes = Resume.query.filter(Resume.id.in_(resume_ids)).all() if resume_ids else []
-    applicants = Applicant.query.filter(Applicant.id.in_(applicant_ids)).all() if applicant_ids else []
+    resumes = Resume.query.filter(
+        Resume.id.in_(resume_ids),
+        Resume.device_id == device_id,
+    ).all() if resume_ids else []
+    applicants = Applicant.query.filter(
+        Applicant.id.in_(applicant_ids),
+        Applicant.device_id == device_id,
+    ).all() if applicant_ids else []
         
     # 1. Delete logs
     if result_ids:
-        RecommendationLog.query.filter(RecommendationLog.result_id.in_(result_ids)).delete(synchronize_session=False)
+        RecommendationLog.query.filter(
+            RecommendationLog.result_id.in_(result_ids),
+            RecommendationLog.device_id == device_id,
+        ).delete(synchronize_session=False)
         
     # 2. Delete screening results
     if result_ids:
-        ScreeningResult.query.filter(ScreeningResult.id.in_(result_ids)).delete(synchronize_session=False)
+        ScreeningResult.query.filter(
+            ScreeningResult.id.in_(result_ids),
+            ScreeningResult.device_id == device_id,
+        ).delete(synchronize_session=False)
         
     # 3. Delete extracted features
     if resume_ids:
-        ExtractedSkill.query.filter(ExtractedSkill.resume_id.in_(resume_ids)).delete(synchronize_session=False)
-        ExtractedEducation.query.filter(ExtractedEducation.resume_id.in_(resume_ids)).delete(synchronize_session=False)
-        ExtractedExperience.query.filter(ExtractedExperience.resume_id.in_(resume_ids)).delete(synchronize_session=False)
-        ExtractedCertification.query.filter(ExtractedCertification.resume_id.in_(resume_ids)).delete(synchronize_session=False)
+        ExtractedSkill.query.filter(ExtractedSkill.resume_id.in_(resume_ids), ExtractedSkill.device_id == device_id).delete(synchronize_session=False)
+        ExtractedEducation.query.filter(ExtractedEducation.resume_id.in_(resume_ids), ExtractedEducation.device_id == device_id).delete(synchronize_session=False)
+        ExtractedExperience.query.filter(ExtractedExperience.resume_id.in_(resume_ids), ExtractedExperience.device_id == device_id).delete(synchronize_session=False)
+        ExtractedCertification.query.filter(ExtractedCertification.resume_id.in_(resume_ids), ExtractedCertification.device_id == device_id).delete(synchronize_session=False)
         
     # 4. Delete files
     for r in resumes:
@@ -293,9 +345,9 @@ def delete_all_candidates():
                 
     # 5. Delete resumes & applicants
     if resume_ids:
-        Resume.query.filter(Resume.id.in_(resume_ids)).delete(synchronize_session=False)
+        Resume.query.filter(Resume.id.in_(resume_ids), Resume.device_id == device_id).delete(synchronize_session=False)
     if applicant_ids:
-        Applicant.query.filter(Applicant.id.in_(applicant_ids)).delete(synchronize_session=False)
+        Applicant.query.filter(Applicant.id.in_(applicant_ids), Applicant.device_id == device_id).delete(synchronize_session=False)
         
     db.session.commit()
     

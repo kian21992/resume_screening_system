@@ -1002,6 +1002,13 @@ def _skill_variants(skill):
     normalized = skill.strip().lower()
     variants = {normalized}
     variants.update(SKILL_ALIASES.get(normalized, []))
+    # Teaching skills live in the education-domain catalog. Reuse those aliases
+    # during job matching so a canonical requirement such as ``Mathematics
+    # Instruction`` can match resume wording such as ``teaching mathematics``.
+    for canonical, education_variants in education_skill_vocabulary().items():
+        if canonical.casefold() == normalized:
+            variants.update(variant.casefold() for variant in education_variants)
+            break
     return variants
 
 

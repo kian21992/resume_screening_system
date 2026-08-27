@@ -1,5 +1,6 @@
 import os
 import secrets
+from datetime import timedelta
 
 from dotenv import load_dotenv
 
@@ -45,5 +46,9 @@ class Config:
     REMEMBER_COOKIE_HTTPONLY = True
     REMEMBER_COOKIE_SAMESITE = 'Lax'
     REMEMBER_COOKIE_SECURE = APP_ENV in {'production', 'prod'}
+    PERMANENT_SESSION_LIFETIME = timedelta(
+        days=int(os.environ.get('DEVICE_COOKIE_DAYS', '3650'))
+    )
+    SESSION_REFRESH_EACH_REQUEST = True
     RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI', 'memory://')
     RATELIMIT_HEADERS_ENABLED = True
