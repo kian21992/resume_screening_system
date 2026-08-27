@@ -133,6 +133,45 @@ class SecurityTests(unittest.TestCase):
         self.assertIn('at least 12 characters', result.output)
         self.assertIsNone(User.query.filter_by(username='deployed-admin').first())
 
+    def test_bootstrap_users_command_creates_all_three_roles_idempotently(self):
+        runner = self.app.test_cli_runner()
+        command_env = {
+            'INITIAL_ADMIN_USERNAME': 'deployed-admin',
+            'INITIAL_ADMIN_PASSWORD': 'strong-admin-password',
+            'INITIAL_MANAGER_PASSWORD': 'strong-manager-password',
+            'INITIAL_HR_PASSWORD': 'strong-human-resources-password',
+        }
+
+        first = runner.invoke(args=['bootstrap-users'], env=command_env)
+        second = runner.invoke(args=['bootstrap-users'], env=command_env)
+
+        self.assertEqual(first.exit_code, 0, first.output)
+        self.assertEqual(second.exit_code, 0, second.output)
+        expected = {
+            'deployed-admin': ('admin', command_env['INITIAL_ADMIN_PASSWORD']),
+            'it_manager': ('manager', command_env['INITIAL_MANAGER_PASSWORD']),
+            'hr_admin': ('hr', command_env['INITIAL_HR_PASSWORD']),
+        }
+        for username, (role, password) in expected.items():
+            user = User.query.filter_by(username=username).one()
+            self.assertEqual(user.role, role)
+            self.assertTrue(bcrypt.check_password_hash(user.password_hash, password))
+            self.assertEqual(User.query.filter_by(username=username).count(), 1)
+
+    def test_bootstrap_users_command_skips_unconfigured_optional_roles(self):
+        result = self.app.test_cli_runner().invoke(
+            args=['bootstrap-users'],
+            env={
+                'INITIAL_ADMIN_USERNAME': 'only-admin',
+                'INITIAL_ADMIN_PASSWORD': 'strong-admin-password',
+            },
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNotNone(User.query.filter_by(username='only-admin').first())
+        self.assertIsNone(User.query.filter_by(username='it_manager').first())
+        self.assertIsNone(User.query.filter_by(username='hr_admin').first())
+
     def test_production_requires_a_strong_secret(self):
         with self.assertRaises(RuntimeError):
             resolve_secret_key('production', '')

@@ -32,6 +32,10 @@ services:
         sync: false
       - key: INITIAL_ADMIN_PASSWORD
         sync: false
+      - key: INITIAL_MANAGER_PASSWORD
+        sync: false
+      - key: INITIAL_HR_PASSWORD
+        sync: false
 
 databases:
   - name: resume-screening-db

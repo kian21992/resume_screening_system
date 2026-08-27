@@ -169,17 +169,21 @@ you create the Blueprint:
 
 - `INITIAL_ADMIN_USERNAME`
 - `INITIAL_ADMIN_PASSWORD` (at least 12 characters)
+- `INITIAL_MANAGER_PASSWORD` (at least 12 characters; creates `it_manager`)
+- `INITIAL_HR_PASSWORD` (at least 12 characters; creates `hr_admin`)
 
 The deployment generates `SECRET_KEY`, installs the pinned spaCy model and NLTK
-data, runs the device-isolation migration, creates the initial administrator
-only when it is missing, and starts the application with Gunicorn.
+data, runs the device-isolation migration, creates the initial administrator,
+manager, and HR users only when they are missing, and starts the application
+with Gunicorn. The manager and HR usernames can be overridden with
+`INITIAL_MANAGER_USERNAME` and `INITIAL_HR_USERNAME` environment variables.
 
 To deploy:
 
 1. Commit and push the repository to GitHub.
 2. In Render, choose **New > Blueprint** and connect this repository.
 3. Keep the `main` branch and `render.yaml` path selected.
-4. Enter a private initial administrator username and password when prompted.
+4. Enter private administrator, manager, and HR passwords when prompted.
 5. Apply the Blueprint and wait for both the database and web service to become
    available.
 6. Open the generated `onrender.com` URL and sign in with the administrator.

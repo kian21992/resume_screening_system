@@ -2,7 +2,7 @@
 set -euo pipefail
 
 python -m flask --app app migrate-device-isolation
-python -m flask --app app bootstrap-admin
+python -m flask --app app bootstrap-users
 
 exec gunicorn \
     --bind "0.0.0.0:${PORT:-10000}" \

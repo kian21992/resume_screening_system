@@ -150,43 +150,72 @@ def create_app(config_class=Config):
         else:
             click.echo('Device-isolation schema is already up to date.')
 
+    def bootstrap_configured_users(include_role_users=False):
+        """Create configured production users without embedding passwords."""
+        from app.models import User
+
+        configurations = [
+            ('admin', 'INITIAL_ADMIN_USERNAME', 'INITIAL_ADMIN_PASSWORD', None, True),
+        ]
+        if include_role_users:
+            configurations.extend([
+                ('manager', 'INITIAL_MANAGER_USERNAME', 'INITIAL_MANAGER_PASSWORD', 'it_manager', False),
+                ('hr', 'INITIAL_HR_USERNAME', 'INITIAL_HR_PASSWORD', 'hr_admin', False),
+            ])
+
+        configured_users = []
+        for role, username_key, password_key, default_username, required in configurations:
+            username = (os.environ.get(username_key) or default_username or '').strip()
+            password = os.environ.get(password_key) or ''
+
+            if not required and not password:
+                click.echo(f'Skipped optional {role} user: {password_key} is not configured.')
+                continue
+            if not username:
+                raise click.ClickException(f'{username_key} is required.')
+            if len(username) > 150:
+                raise click.ClickException(f'{username_key} must be 150 characters or fewer.')
+            if len(password) < 12:
+                raise click.ClickException(
+                    f'{password_key} must contain at least 12 characters.'
+                )
+            if any(item[0] == username for item in configured_users):
+                raise click.ClickException(
+                    f'The username "{username}" is configured for more than one role.'
+                )
+            configured_users.append((username, password, role))
+
+        existing_users = {}
+        for username, _password, role in configured_users:
+            existing = User.query.filter_by(username=username).first()
+            if existing is not None and existing.role != role:
+                raise click.ClickException(
+                    f'The configured {role} user "{username}" already exists with '
+                    f'the role "{existing.role}".'
+                )
+            existing_users[username] = existing
+
+        for username, password, role in configured_users:
+            if existing_users[username] is not None:
+                click.echo(f'Initial {role} user already exists: {username}')
+                continue
+            db.session.add(User(
+                username=username,
+                password_hash=bcrypt.generate_password_hash(password).decode('utf-8'),
+                role=role,
+            ))
+            click.echo(f'Created initial {role} user: {username}')
+        db.session.commit()
+
     @app.cli.command('bootstrap-admin')
     def bootstrap_admin_command():
         """Create the initial production administrator from environment secrets."""
-        from app.models import User
+        bootstrap_configured_users()
 
-        username = (os.environ.get('INITIAL_ADMIN_USERNAME') or '').strip()
-        password = os.environ.get('INITIAL_ADMIN_PASSWORD') or ''
-
-        if not username:
-            raise click.ClickException('INITIAL_ADMIN_USERNAME is required.')
-        if len(username) > 150:
-            raise click.ClickException(
-                'INITIAL_ADMIN_USERNAME must be 150 characters or fewer.'
-            )
-        if len(password) < 12:
-            raise click.ClickException(
-                'INITIAL_ADMIN_PASSWORD must contain at least 12 characters.'
-            )
-
-        existing = User.query.filter_by(username=username).first()
-        if existing is not None:
-            if existing.role != 'admin':
-                raise click.ClickException(
-                    'The configured initial administrator already exists with '
-                    'a non-admin role.'
-                )
-            click.echo(f'Initial administrator already exists: {username}')
-            return
-
-        user = User(
-            username=username,
-            password_hash=bcrypt.generate_password_hash(password).decode('utf-8'),
-            role='admin',
-        )
-        db.session.add(user)
-        db.session.commit()
-        click.echo(f'Created initial administrator: {username}')
+    @app.cli.command('bootstrap-users')
+    def bootstrap_users_command():
+        """Create the initial admin, manager, and HR production users."""
+        bootstrap_configured_users(include_role_users=True)
 
     with app.app_context():
         # Make sure uploads folder exists
