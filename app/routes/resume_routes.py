@@ -175,7 +175,10 @@ def _duplicate_resume_message(uploaded_filename, duplicate_resume):
         id=duplicate_resume.applicant_id,
         device_id=duplicate_resume.device_id,
     ).first()
-    job = JobDescription.query.get(duplicate_resume.job_id)
+    job = JobDescription.query.filter_by(
+        id=duplicate_resume.job_id,
+        device_id=duplicate_resume.device_id,
+    ).first()
     candidate_name = applicant.name if applicant else 'Unknown Candidate'
     job_title = job.title if job else 'Unknown Job'
 
@@ -222,7 +225,10 @@ def process_resume_file(file, job):
             )
             return False, f'{file.filename}: failed to extract text.'
 
-        criteria = ScreeningCriteria.query.filter_by(job_id=job.id).first()
+        criteria = ScreeningCriteria.query.filter_by(
+            job_id=job.id,
+            device_id=device_id,
+        ).first()
         min_score = criteria.min_fit_score if criteria else 50.0
         requires_all_critical = criteria.requires_all_critical if criteria else False
 
@@ -360,7 +366,8 @@ def process_resume_file(file, job):
 @login_required
 @roles_required('hr', 'manager', 'admin')
 def upload():
-    jobs = JobDescription.query.all()
+    device_id = current_device_id()
+    jobs = JobDescription.query.filter_by(device_id=device_id).all()
     
     if request.method == 'POST':
         if 'file' not in request.files:
@@ -387,7 +394,10 @@ def upload():
             flash(f'Unsupported file type: {", ".join(invalid_files)}. Please upload PDF or DOCX resumes only.', 'danger')
             return redirect(request.url)
 
-        job = JobDescription.query.get_or_404(job_id)
+        job = JobDescription.query.filter_by(
+            id=job_id,
+            device_id=device_id,
+        ).first_or_404()
         processed = []
         failed = []
 

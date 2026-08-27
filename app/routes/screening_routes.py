@@ -28,11 +28,18 @@ def _screening_filter_args():
     return job_id, reviewer_status
 
 def _apply_screening_filters(query, job_id=None, reviewer_status=''):
-    query = query.filter(ScreeningResult.device_id == current_device_id())
+    device_id = current_device_id()
+    query = query.join(
+        JobDescription,
+        ScreeningResult.job_id == JobDescription.id,
+    ).filter(
+        ScreeningResult.device_id == device_id,
+        JobDescription.device_id == device_id,
+    )
     if job_id:
-        query = query.filter_by(job_id=job_id)
+        query = query.filter(ScreeningResult.job_id == job_id)
     if reviewer_status:
-        query = query.filter_by(reviewer_status=reviewer_status)
+        query = query.filter(ScreeningResult.reviewer_status == reviewer_status)
     return query
 
 def _screening_sort_arg():
@@ -67,9 +74,12 @@ def _candidate_navigation(result_id, job_id=None, reviewer_status='', sort='fit_
 @screening_bp.route('/screening_results')
 @login_required
 def screening_results():
+    device_id = current_device_id()
     job_id, reviewer_status = _screening_filter_args()
     sort = _screening_sort_arg()
-    jobs = JobDescription.query.all()
+    jobs = JobDescription.query.filter_by(device_id=device_id).all()
+    if job_id and all(job.id != job_id for job in jobs):
+        job_id = None
 
     query = _ordered_screening_results_query(job_id, reviewer_status, sort)
     results = query.all()
@@ -90,15 +100,22 @@ def result_detail(result_id):
     device_id = current_device_id()
     job_id, reviewer_status = _screening_filter_args()
     sort = _screening_sort_arg()
-    result = ScreeningResult.query.filter_by(
-        id=result_id,
-        device_id=device_id,
+    result = ScreeningResult.query.join(
+        JobDescription,
+        ScreeningResult.job_id == JobDescription.id,
+    ).filter(
+        ScreeningResult.id == result_id,
+        ScreeningResult.device_id == device_id,
+        JobDescription.device_id == device_id,
     ).first_or_404()
     applicant = Applicant.query.filter_by(
         id=result.applicant_id,
         device_id=device_id,
     ).first_or_404()
-    job = JobDescription.query.get(result.job_id)
+    job = JobDescription.query.filter_by(
+        id=result.job_id,
+        device_id=device_id,
+    ).first_or_404()
     resume = Resume.query.filter_by(
         id=result.resume_id,
         device_id=device_id,
@@ -185,9 +202,13 @@ def result_detail(result_id):
 @roles_required('hr', 'manager', 'admin')
 def update_review(result_id):
     device_id = current_device_id()
-    result = ScreeningResult.query.filter_by(
-        id=result_id,
-        device_id=device_id,
+    result = ScreeningResult.query.join(
+        JobDescription,
+        ScreeningResult.job_id == JobDescription.id,
+    ).filter(
+        ScreeningResult.id == result_id,
+        ScreeningResult.device_id == device_id,
+        JobDescription.device_id == device_id,
     ).first_or_404()
     reviewer_status = (request.form.get('reviewer_status') or '').strip()
     reviewer_notes = (request.form.get('reviewer_notes') or '').strip()
@@ -227,9 +248,13 @@ def update_review(result_id):
 @roles_required('admin')
 def delete_candidate(result_id):
     device_id = current_device_id()
-    result = ScreeningResult.query.filter_by(
-        id=result_id,
-        device_id=device_id,
+    result = ScreeningResult.query.join(
+        JobDescription,
+        ScreeningResult.job_id == JobDescription.id,
+    ).filter(
+        ScreeningResult.id == result_id,
+        ScreeningResult.device_id == device_id,
+        JobDescription.device_id == device_id,
     ).first_or_404()
     job_id = result.job_id
     applicant_id = result.applicant_id
@@ -290,11 +315,19 @@ def delete_all_candidates():
         reviewer_status = ''
     
     # Query targets
-    result_query = ScreeningResult.query.filter_by(device_id=device_id)
+    result_query = ScreeningResult.query.join(
+        JobDescription,
+        ScreeningResult.job_id == JobDescription.id,
+    ).filter(
+        ScreeningResult.device_id == device_id,
+        JobDescription.device_id == device_id,
+    )
     if job_id:
-        result_query = result_query.filter_by(job_id=job_id)
+        result_query = result_query.filter(ScreeningResult.job_id == job_id)
     if reviewer_status:
-        result_query = result_query.filter_by(reviewer_status=reviewer_status)
+        result_query = result_query.filter(
+            ScreeningResult.reviewer_status == reviewer_status
+        )
 
     results = result_query.all()
     resume_ids = [res.resume_id for res in results]

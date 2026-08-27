@@ -41,6 +41,7 @@ class TestReviewerWorkflow(unittest.TestCase):
         db.session.add(user)
         db.session.flush()
         job = JobDescription(
+            device_id=self.device_id,
             title="Teacher",
             required_skills="Classroom Management",
             critical_skills="",

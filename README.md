@@ -44,11 +44,14 @@ generate one with:
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-6. Initialize the database with sample users and jobs:
+6. Initialize the database with sample users:
 
 ```bash
 python init_db.py
 ```
+
+Jobs are device-owned, so create demonstration jobs from the web interface in
+the browser profile that should own them.
 
 7. Run the application:
 
@@ -119,13 +122,14 @@ the deployment runs multiple workers. If the application is behind a reverse
 proxy, configure trusted proxy handling at the hosting layer so the application
 receives the correct client address.
 
-## Device-isolated resume data
+## Device-isolated screening data
 
 Each browser profile receives a random 256-bit `device_id` in Flask's signed,
 persistent session cookie. Applicants, resumes, extracted fields, screening
 results, recommendations, rankings, duplicate checks, dashboard totals, and
 executive-summary totals are scoped to that identifier on the server. Jobs and
-screening criteria remain shared configuration.
+their screening criteria are device-owned as well. Job lists, upload choices,
+and direct job URLs are filtered by the same identifier.
 
 The identifier survives login/logout and normal browser restarts. Clearing site
 cookies or using private browsing creates a new device identity, so the previous
@@ -140,11 +144,12 @@ the database and run the idempotent migration:
 python -m flask --app app migrate-device-isolation
 ```
 
-Historical records do not contain trustworthy browser ownership information.
-The migration therefore assigns them a reserved legacy identifier that no
-browser can receive, quarantining them from the user interface. Fresh databases
-created after this change already contain the required columns and indexes; the
-migration command will report that the schema is up to date.
+For existing jobs, the migration infers ownership from their oldest
+device-owned candidate data. Records without trustworthy browser ownership are
+assigned a reserved legacy identifier that no browser can receive, quarantining
+them from the user interface. Fresh databases created after this change already
+contain the required columns and indexes; the migration command will report that
+the schema is up to date.
 
 Run the device-isolation and security regression tests with:
 

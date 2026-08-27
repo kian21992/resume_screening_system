@@ -17,16 +17,25 @@ job_bp = Blueprint('job', __name__)
 def legacy_upload_folder():
     return os.path.join(current_app.root_path, 'static', 'uploads')
 
+def owned_job_or_404(job_id):
+    return JobDescription.query.filter_by(
+        id=job_id,
+        device_id=current_device_id(),
+    ).first_or_404()
+
 @job_bp.route('/jobs')
 @login_required
 def list_jobs():
-    jobs = JobDescription.query.order_by(JobDescription.created_at.desc()).all()
+    jobs = JobDescription.query.filter_by(
+        device_id=current_device_id(),
+    ).order_by(JobDescription.created_at.desc()).all()
     return render_template('jobs/list.html', jobs=jobs)
 
 @job_bp.route('/jobs/create', methods=['GET', 'POST'])
 @login_required
 @roles_required('manager', 'admin')
 def create_job():
+    device_id = current_device_id()
     if request.method == 'POST':
         title = request.form.get('title')
         required_skills = request.form.get('required_skills')
@@ -44,6 +53,7 @@ def create_job():
             return redirect(url_for('job.create_job'))
             
         new_job = JobDescription(
+            device_id=device_id,
             title=title,
             required_skills=required_skills,
             critical_skills=critical_skills,
@@ -57,6 +67,7 @@ def create_job():
         db.session.flush() # get new_job.id
         
         criteria = ScreeningCriteria(
+            device_id=device_id,
             job_id=new_job.id,
             min_fit_score=min_fit_score,
             requires_all_critical=requires_all_critical
@@ -73,8 +84,12 @@ def create_job():
 @login_required
 @roles_required('manager', 'admin')
 def edit_job(job_id):
-    job = JobDescription.query.get_or_404(job_id)
-    criteria = ScreeningCriteria.query.filter_by(job_id=job.id).first()
+    device_id = current_device_id()
+    job = owned_job_or_404(job_id)
+    criteria = ScreeningCriteria.query.filter_by(
+        job_id=job.id,
+        device_id=device_id,
+    ).first()
 
     if request.method == 'POST':
         title = request.form.get('title')
@@ -102,6 +117,7 @@ def edit_job(job_id):
             criteria.requires_all_critical = requires_all_critical
         else:
             criteria = ScreeningCriteria(
+                device_id=device_id,
                 job_id=job.id,
                 min_fit_score=min_fit_score,
                 requires_all_critical=requires_all_critical
@@ -117,19 +133,24 @@ def edit_job(job_id):
 @job_bp.route('/jobs/<int:job_id>')
 @login_required
 def view_job(job_id):
-    job = JobDescription.query.get_or_404(job_id)
-    criteria = ScreeningCriteria.query.filter_by(job_id=job.id).first()
+    device_id = current_device_id()
+    job = owned_job_or_404(job_id)
+    criteria = ScreeningCriteria.query.filter_by(
+        job_id=job.id,
+        device_id=device_id,
+    ).first()
     return render_template('jobs/view.html', job=job, criteria=criteria)
 
 @job_bp.route('/jobs/<int:job_id>/delete', methods=['POST'])
 @login_required
 @roles_required('admin')
 def delete_job(job_id):
-    job = JobDescription.query.get_or_404(job_id)
     device_id = current_device_id()
+    job = owned_job_or_404(job_id)
 
-    # Jobs are shared configuration, while candidate data is device-owned.
-    # Never let one browser's job deletion cascade into another browser's data.
+    # A historical shared deployment can leave another device's candidate rows
+    # linked to this job. Preserve them instead of crossing the ownership
+    # boundary or violating their foreign keys.
     other_device_data_exists = (
         Resume.query.filter(
             Resume.job_id == job.id,
@@ -142,7 +163,7 @@ def delete_job(job_id):
     )
     if other_device_data_exists:
         flash(
-            'This shared job cannot be deleted while protected candidate records exist.',
+            'This job cannot be deleted while protected legacy candidate records exist.',
             'danger',
         )
         return redirect(url_for('job.view_job', job_id=job.id))
@@ -197,7 +218,10 @@ def delete_job(job_id):
     ).delete(synchronize_session=False)
     
     # 9. Delete from screening_criteria
-    ScreeningCriteria.query.filter_by(job_id=job.id).delete(synchronize_session=False)
+    ScreeningCriteria.query.filter_by(
+        job_id=job.id,
+        device_id=device_id,
+    ).delete(synchronize_session=False)
     
     # 10. Delete the job itself
     db.session.delete(job)

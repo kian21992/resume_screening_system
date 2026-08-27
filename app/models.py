@@ -17,6 +17,7 @@ class User(db.Model, UserMixin):
 class JobDescription(db.Model):
     __tablename__ = 'jobs'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     title = db.Column(db.String(255), nullable=False)
     required_skills = db.Column(db.Text, nullable=False) # comma-separated
     critical_skills = db.Column(db.Text, nullable=True) # comma-separated must-have skills
@@ -29,6 +30,7 @@ class JobDescription(db.Model):
 class ScreeningCriteria(db.Model):
     __tablename__ = 'screening_criteria'
     id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), nullable=False, index=True)
     job_id = db.Column(db.Integer, db.ForeignKey('jobs.id'), nullable=False)
     min_fit_score = db.Column(db.Float, default=50.0)
     requires_all_critical = db.Column(db.Boolean, default=False)

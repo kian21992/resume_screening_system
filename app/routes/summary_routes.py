@@ -69,11 +69,16 @@ def build_summary(months_limit=12, device_id=None):
     tz = _display_tz()
     owner = device_id or current_device_id()
 
-    jobs = {job.id: job for job in JobDescription.query.all()}
+    jobs = {
+        job.id: job
+        for job in JobDescription.query.filter_by(device_id=owner).all()
+    }
 
     # ---- resumes uploaded, bucketed by (month, job) ----
     uploads = defaultdict(lambda: defaultdict(int))
     for resume in Resume.query.filter_by(device_id=owner).all():
+        if resume.job_id not in jobs:
+            continue
         local_dt = _to_local(resume.upload_date, tz)
         if local_dt is None:
             continue
@@ -85,6 +90,8 @@ def build_summary(months_limit=12, device_id=None):
     score_sum = defaultdict(lambda: defaultdict(float))
 
     for result in ScreeningResult.query.filter_by(device_id=owner).all():
+        if result.job_id not in jobs:
+            continue
         local_dt = _to_local(result.screened_at, tz)
         if local_dt is None:
             continue

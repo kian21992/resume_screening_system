@@ -35,6 +35,7 @@ class SecurityTests(unittest.TestCase):
         db.drop_all()
         db.create_all()
 
+        self.device_id = '3' * 64
         self.users = {}
         for role in ('hr', 'manager', 'admin'):
             user = User(username=role, password_hash='unused', role=role)
@@ -43,13 +44,17 @@ class SecurityTests(unittest.TestCase):
             self.users[role] = user.id
 
         job = JobDescription(
+            device_id=self.device_id,
             title='Security Test Job',
             required_skills='Python',
             created_by=self.users['manager'],
         )
         db.session.add(job)
         db.session.flush()
-        db.session.add(ScreeningCriteria(job_id=job.id))
+        db.session.add(ScreeningCriteria(
+            device_id=self.device_id,
+            job_id=job.id,
+        ))
         db.session.commit()
         self.job_id = job.id
         self.client = self.app.test_client()
@@ -61,6 +66,7 @@ class SecurityTests(unittest.TestCase):
 
     def login_as(self, role):
         with self.client.session_transaction() as session:
+            session['device_id'] = self.device_id
             session['_user_id'] = str(self.users[role])
             session['_fresh'] = True
 
