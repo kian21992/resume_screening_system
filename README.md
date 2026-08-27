@@ -165,6 +165,8 @@ deployment in Render's Singapore region. It provisions one Flask web service
 and one private Render Postgres database. Render prompts for these secrets when
 you create the Blueprint:
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/kian21992/resume_screening_system)
+
 - `INITIAL_ADMIN_USERNAME`
 - `INITIAL_ADMIN_PASSWORD` (at least 12 characters)
 
