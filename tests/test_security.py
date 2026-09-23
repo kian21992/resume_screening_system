@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from app import bcrypt, create_app, db
-from app.models import JobDescription, ScreeningCriteria, User
+from app.models import Applicant, JobDescription, Resume, ScreeningCriteria, ScreeningResult, User
 from config import resolve_secret_key
 
 
@@ -70,14 +70,63 @@ class SecurityTests(unittest.TestCase):
             session['_user_id'] = str(self.users[role])
             session['_fresh'] = True
 
-    def test_hr_cannot_manage_or_delete_jobs(self):
+    def test_hr_can_create_edit_and_delete_jobs(self):
         self.login_as('hr')
-        self.assertEqual(self.client.get('/jobs/create').status_code, 403)
-        self.assertEqual(
-            self.client.post(f'/jobs/{self.job_id}/delete').status_code,
-            403,
-        )
+        self.assertEqual(self.client.get('/jobs/create').status_code, 200)
+        self.assertEqual(self.client.get(f'/jobs/{self.job_id}/edit').status_code, 200)
+        jobs_page = self.client.get('/jobs').data
+        self.assertIn(b'Create New Job', jobs_page)
+        self.assertIn(b'> Delete</button>', jobs_page)
+
+        created = self.client.post('/jobs/create', data={
+            'title': 'HR Created Job',
+            'required_skills': 'Teaching',
+        })
+        self.assertEqual(created.status_code, 302)
+        job = JobDescription.query.filter_by(title='HR Created Job').one()
+        self.assertEqual(job.created_by, self.users['hr'])
+
+        edited = self.client.post(f'/jobs/{job.id}/edit', data={
+            'title': 'HR Edited Job',
+            'required_skills': 'Teaching, Planning',
+        })
+        self.assertEqual(edited.status_code, 302)
+        self.assertEqual(db.session.get(JobDescription, job.id).title, 'HR Edited Job')
+
+        deleted = self.client.post(f'/jobs/{job.id}/delete')
+        self.assertEqual(deleted.status_code, 302)
+        self.assertIsNone(db.session.get(JobDescription, job.id))
         self.assertIsNotNone(db.session.get(JobDescription, self.job_id))
+
+    def create_candidate(self):
+        applicant = Applicant(
+            device_id=self.device_id,
+            name='HR Test Candidate',
+            applied_job_id=self.job_id,
+        )
+        db.session.add(applicant)
+        db.session.flush()
+        resume = Resume(
+            device_id=self.device_id,
+            applicant_id=applicant.id,
+            job_id=self.job_id,
+            filename='hr-test.pdf',
+            filepath='nonexistent-hr-test.pdf',
+            original_text='Teaching experience',
+        )
+        db.session.add(resume)
+        db.session.flush()
+        result = ScreeningResult(
+            device_id=self.device_id,
+            resume_id=resume.id,
+            applicant_id=applicant.id,
+            job_id=self.job_id,
+            fit_score=80,
+            recommendation_label='Qualified',
+        )
+        db.session.add(result)
+        db.session.commit()
+        return applicant.id, resume.id, result.id
 
     def test_manager_can_manage_but_cannot_delete_jobs(self):
         self.login_as('manager')
@@ -93,12 +142,32 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIsNone(db.session.get(JobDescription, self.job_id))
 
-    def test_only_admin_can_bulk_delete_candidates(self):
+    def test_hr_can_delete_individual_and_filtered_candidates(self):
         self.login_as('hr')
-        self.assertEqual(
-            self.client.post('/screening_results/delete_all').status_code,
-            403,
-        )
+        applicant_id, resume_id, result_id = self.create_candidate()
+        page = self.client.get('/screening_results').data
+        self.assertIn(b'Remove filtered candidates', page)
+        self.assertIn(b'Remove HR Test Candidate', page)
+
+        response = self.client.post(f'/screening_results/{result_id}/delete')
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(db.session.get(ScreeningResult, result_id))
+        self.assertIsNone(db.session.get(Resume, resume_id))
+        self.assertIsNone(db.session.get(Applicant, applicant_id))
+
+        applicant_id, resume_id, result_id = self.create_candidate()
+        response = self.client.post('/screening_results/delete_all')
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(db.session.get(ScreeningResult, result_id))
+        self.assertIsNone(db.session.get(Resume, resume_id))
+        self.assertIsNone(db.session.get(Applicant, applicant_id))
+
+    def test_manager_cannot_delete_candidates(self):
+        self.login_as('manager')
+        _, _, result_id = self.create_candidate()
+        self.assertEqual(self.client.post(f'/screening_results/{result_id}/delete').status_code, 403)
+        self.assertEqual(self.client.post('/screening_results/delete_all').status_code, 403)
+        self.assertIsNotNone(db.session.get(ScreeningResult, result_id))
 
     def test_upload_form_uses_one_mobile_safe_native_file_input(self):
         self.login_as('hr')

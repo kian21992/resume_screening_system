@@ -275,6 +275,58 @@ Unique State College
             for row in ExtractedSkill.query.filter_by(resume_id=uploaded.id).all()
         ))
 
+    def test_same_resume_can_be_screened_for_all_jobs_without_duplicate_records(self):
+        second_job = JobDescription(
+            device_id=self.device_id,
+            title='Curriculum Designer',
+            required_skills='Curriculum Development',
+            created_by=self.user_id,
+        )
+        db.session.add(second_job)
+        db.session.commit()
+
+        resume_text = (
+            'Andrea Valdez\nandrea.multi@example.com\nSKILLS\n'
+            'Classroom Management\nCurriculum Development\n'
+            'EDUCATION\nBachelor of Education'
+        )
+
+        def upload_to(job_id):
+            return self.client.post(
+                '/resume/upload',
+                data={
+                    'job_id': job_id,
+                    'file': (io.BytesIO(b'same-resume-content'), 'andrea.docx'),
+                },
+                content_type='multipart/form-data',
+            )
+
+        with tempfile.TemporaryDirectory() as upload_dir:
+            self.app.config['UPLOAD_FOLDER'] = upload_dir
+            with patch('app.routes.resume_routes.extract_text_from_file', return_value=resume_text):
+                self.assertEqual(upload_to('all').status_code, 302)
+                uploaded = Resume.query.filter(Resume.filename.like('andrea_%')).all()
+                self.assertEqual({resume.job_id for resume in uploaded}, {self.job_id, second_job.id})
+                self.assertEqual(len(uploaded), 2)
+                self.assertEqual(
+                    ScreeningResult.query.filter(ScreeningResult.resume_id.in_([r.id for r in uploaded])).count(),
+                    2,
+                )
+
+                self.assertEqual(upload_to('all').status_code, 302)
+                self.assertEqual(Resume.query.filter(Resume.filename.like('andrea_%')).count(), 2)
+
+                third_job = JobDescription(
+                    device_id=self.device_id,
+                    title='Academic Coordinator',
+                    required_skills='Classroom Management',
+                    created_by=self.user_id,
+                )
+                db.session.add(third_job)
+                db.session.commit()
+                self.assertEqual(upload_to(str(third_job.id)).status_code, 302)
+                self.assertEqual(Resume.query.filter(Resume.filename.like('andrea_%')).count(), 3)
+
     def test_results_page_filters_by_reviewer_decision(self):
         response = self.client.get("/screening_results?reviewer_status=Rejected")
         self.assertEqual(response.status_code, 200)

@@ -245,7 +245,7 @@ def update_review(result_id):
 
 @screening_bp.route('/screening_results/<int:result_id>/delete', methods=['POST'])
 @login_required
-@roles_required('admin')
+@roles_required('hr', 'admin')
 def delete_candidate(result_id):
     device_id = current_device_id()
     result = ScreeningResult.query.join(
@@ -306,7 +306,7 @@ def delete_candidate(result_id):
 
 @screening_bp.route('/screening_results/delete_all', methods=['POST'])
 @login_required
-@roles_required('admin')
+@roles_required('hr', 'admin')
 def delete_all_candidates():
     device_id = current_device_id()
     job_id = request.args.get('job_id', type=int)

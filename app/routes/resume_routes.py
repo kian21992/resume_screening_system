@@ -4,7 +4,7 @@ import hashlib
 import traceback
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, abort
 from flask_login import current_user, login_required
 from app import db
 from app.models import (
@@ -54,13 +54,16 @@ def _file_sha256(filepath):
             digest.update(chunk)
     return digest.hexdigest()
 
-def _find_duplicate_file(saved_filepath, device_id=None):
+def _find_duplicate_file(saved_filepath, device_id=None, job_id=None):
     if not os.path.exists(saved_filepath):
         return None
 
     owner = device_id or current_device_id()
     uploaded_hash = _file_sha256(saved_filepath)
-    for existing_resume in Resume.query.filter_by(device_id=owner).all():
+    existing_resumes = Resume.query.filter_by(device_id=owner)
+    if job_id is not None:
+        existing_resumes = existing_resumes.filter_by(job_id=job_id)
+    for existing_resume in existing_resumes.all():
         if not existing_resume.filepath or not os.path.exists(existing_resume.filepath):
             continue
         if os.path.abspath(existing_resume.filepath) == os.path.abspath(saved_filepath):
@@ -106,7 +109,7 @@ def _education_signature(records):
 def _resume_text_signature(text):
     return _normalize_duplicate_text(text)
 
-def _find_duplicate_resume(extracted_text, evaluation, device_id=None):
+def _find_duplicate_resume(extracted_text, evaluation, device_id=None, job_id=None):
     owner = device_id or current_device_id()
     contact_info = evaluation.get('contact_info') or {}
     email = _clean_identity_value(contact_info.get('email'))
@@ -116,7 +119,10 @@ def _find_duplicate_resume(extracted_text, evaluation, device_id=None):
     edu_sig = _education_signature(evaluation.get('extracted_edu'))
     text_sig = _resume_text_signature(extracted_text)
 
-    for existing_resume in Resume.query.filter_by(device_id=owner).all():
+    existing_resumes = Resume.query.filter_by(device_id=owner)
+    if job_id is not None:
+        existing_resumes = existing_resumes.filter_by(job_id=job_id)
+    for existing_resume in existing_resumes.all():
         existing_applicant = Applicant.query.filter_by(
             id=existing_resume.applicant_id,
             device_id=owner,
@@ -205,7 +211,7 @@ def process_resume_file(file, job):
     file.save(save_path)
 
     try:
-        duplicate_file = _find_duplicate_file(save_path, device_id=device_id)
+        duplicate_file = _find_duplicate_file(save_path, device_id=device_id, job_id=job.id)
         if duplicate_file:
             safe_delete_uploaded_file(
                 save_path,
@@ -254,6 +260,7 @@ def process_resume_file(file, job):
             extracted_text,
             evaluation,
             device_id=device_id,
+            job_id=job.id,
         )
         if duplicate_resume:
             safe_delete_uploaded_file(
@@ -375,7 +382,7 @@ def upload():
             return redirect(request.url)
             
         files = [file for file in request.files.getlist('file') if file.filename]
-        job_id = request.form.get('job_id', type=int)
+        selected_job = request.form.get('job_id', '')
         
         if not files:
             flash('No selected file', 'danger')
@@ -385,7 +392,7 @@ def upload():
             flash(f'You can upload up to {MAX_RESUMES_PER_SCREENING} resumes per screening.', 'danger')
             return redirect(request.url)
 
-        if not job_id:
+        if not selected_job:
             flash('Target Job is required.', 'danger')
             return redirect(request.url)
 
@@ -394,38 +401,54 @@ def upload():
             flash(f'Unsupported file type: {", ".join(invalid_files)}. Please upload PDF or DOCX resumes only.', 'danger')
             return redirect(request.url)
 
-        job = JobDescription.query.filter_by(
-            id=job_id,
-            device_id=device_id,
-        ).first_or_404()
+        if selected_job == 'all':
+            target_jobs = jobs
+            if not target_jobs:
+                flash('Post a job before uploading resumes.', 'danger')
+                return redirect(request.url)
+        else:
+            try:
+                job_id = int(selected_job)
+            except ValueError:
+                abort(404)
+            target_jobs = [JobDescription.query.filter_by(
+                id=job_id,
+                device_id=device_id,
+            ).first_or_404()]
         processed = []
         failed = []
 
         for file in files:
-            try:
-                success, message = process_resume_file(file, job)
-                if success:
-                    processed.append(message)
+            for job in target_jobs:
+                try:
+                    file.stream.seek(0)
+                    success, message = process_resume_file(file, job)
+                    message = f'{job.title}: {message}'
+                    if success:
+                        processed.append(message)
+                    else:
+                        failed.append(message)
+                except Exception as exc:
+                    db.session.rollback()
+                    current_app.logger.error(
+                        'Resume batch upload failed for %s and job %s\n%s',
+                        file.filename,
+                        job.id,
+                        traceback.format_exc()
+                    )
+                    failed.append(f'{job.title}: {file.filename}: {exc}')
                 else:
-                    failed.append(message)
-            except Exception as exc:
-                db.session.rollback()
-                current_app.logger.error(
-                    'Resume batch upload failed for %s\n%s',
-                    file.filename,
-                    traceback.format_exc()
-                )
-                failed.append(f'{file.filename}: {exc}')
-            else:
-                db.session.commit()
+                    db.session.commit()
 
         if processed:
-            flash(f'Processed {len(processed)} resume(s) successfully: {"; ".join(processed)}', 'success')
+            flash(f'Processed {len(processed)} job screening(s) successfully: {"; ".join(processed)}', 'success')
         if failed:
-            flash(f'{len(failed)} resume(s) failed: {"; ".join(failed)}', 'danger')
+            flash(f'{len(failed)} job screening(s) failed: {"; ".join(failed)}', 'danger')
 
         if processed:
-            return redirect(url_for('screening.screening_results', job_id=job.id))
+            if selected_job == 'all':
+                return redirect(url_for('screening.screening_results'))
+            return redirect(url_for('screening.screening_results', job_id=target_jobs[0].id))
         else:
             return redirect(request.url)
                 

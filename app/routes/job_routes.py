@@ -33,7 +33,7 @@ def list_jobs():
 
 @job_bp.route('/jobs/create', methods=['GET', 'POST'])
 @login_required
-@roles_required('manager', 'admin')
+@roles_required('hr', 'manager', 'admin')
 def create_job():
     device_id = current_device_id()
     if request.method == 'POST':
@@ -82,7 +82,7 @@ def create_job():
 
 @job_bp.route('/jobs/<int:job_id>/edit', methods=['GET', 'POST'])
 @login_required
-@roles_required('manager', 'admin')
+@roles_required('hr', 'manager', 'admin')
 def edit_job(job_id):
     device_id = current_device_id()
     job = owned_job_or_404(job_id)
@@ -143,7 +143,7 @@ def view_job(job_id):
 
 @job_bp.route('/jobs/<int:job_id>/delete', methods=['POST'])
 @login_required
-@roles_required('admin')
+@roles_required('hr', 'admin')
 def delete_job(job_id):
     device_id = current_device_id()
     job = owned_job_or_404(job_id)
