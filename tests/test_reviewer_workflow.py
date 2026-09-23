@@ -275,7 +275,7 @@ Unique State College
             for row in ExtractedSkill.query.filter_by(resume_id=uploaded.id).all()
         ))
 
-    def test_same_resume_can_be_screened_for_all_jobs_without_duplicate_records(self):
+    def test_same_resume_can_be_screened_for_different_jobs_without_duplicate_records(self):
         second_job = JobDescription(
             device_id=self.device_id,
             title='Curriculum Designer',
@@ -304,7 +304,10 @@ Unique State College
         with tempfile.TemporaryDirectory() as upload_dir:
             self.app.config['UPLOAD_FOLDER'] = upload_dir
             with patch('app.routes.resume_routes.extract_text_from_file', return_value=resume_text):
-                self.assertEqual(upload_to('all').status_code, 302)
+                upload_page = self.client.get('/resume/upload')
+                self.assertNotIn(b'All posted jobs', upload_page.data)
+                self.assertEqual(upload_to(str(self.job_id)).status_code, 302)
+                self.assertEqual(upload_to(str(second_job.id)).status_code, 302)
                 uploaded = Resume.query.filter(Resume.filename.like('andrea_%')).all()
                 self.assertEqual({resume.job_id for resume in uploaded}, {self.job_id, second_job.id})
                 self.assertEqual(len(uploaded), 2)
@@ -313,7 +316,7 @@ Unique State College
                     2,
                 )
 
-                self.assertEqual(upload_to('all').status_code, 302)
+                self.assertEqual(upload_to(str(self.job_id)).status_code, 302)
                 self.assertEqual(Resume.query.filter(Resume.filename.like('andrea_%')).count(), 2)
 
                 third_job = JobDescription(

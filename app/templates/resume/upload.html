@@ -14,7 +14,6 @@
                         <label for="job_id" class="form-label">Target Job Position <span class="text-danger">*</span></label>
                         <select class="form-select" id="job_id" name="job_id" required>
                             <option value="" disabled selected>Select a job position...</option>
-                            <option value="all">All posted jobs (screen each resume for every job)</option>
                             {% for job in jobs %}
                             <option value="{{ job.id }}">{{ job.title }}</option>
                             {% endfor %}

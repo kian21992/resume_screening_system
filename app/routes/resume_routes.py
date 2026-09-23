@@ -4,7 +4,7 @@ import hashlib
 import traceback
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask_login import current_user, login_required
 from app import db
 from app.models import (
@@ -382,7 +382,7 @@ def upload():
             return redirect(request.url)
             
         files = [file for file in request.files.getlist('file') if file.filename]
-        selected_job = request.form.get('job_id', '')
+        job_id = request.form.get('job_id', type=int)
         
         if not files:
             flash('No selected file', 'danger')
@@ -392,7 +392,7 @@ def upload():
             flash(f'You can upload up to {MAX_RESUMES_PER_SCREENING} resumes per screening.', 'danger')
             return redirect(request.url)
 
-        if not selected_job:
+        if not job_id:
             flash('Target Job is required.', 'danger')
             return redirect(request.url)
 
@@ -401,54 +401,38 @@ def upload():
             flash(f'Unsupported file type: {", ".join(invalid_files)}. Please upload PDF or DOCX resumes only.', 'danger')
             return redirect(request.url)
 
-        if selected_job == 'all':
-            target_jobs = jobs
-            if not target_jobs:
-                flash('Post a job before uploading resumes.', 'danger')
-                return redirect(request.url)
-        else:
-            try:
-                job_id = int(selected_job)
-            except ValueError:
-                abort(404)
-            target_jobs = [JobDescription.query.filter_by(
-                id=job_id,
-                device_id=device_id,
-            ).first_or_404()]
+        job = JobDescription.query.filter_by(
+            id=job_id,
+            device_id=device_id,
+        ).first_or_404()
         processed = []
         failed = []
 
         for file in files:
-            for job in target_jobs:
-                try:
-                    file.stream.seek(0)
-                    success, message = process_resume_file(file, job)
-                    message = f'{job.title}: {message}'
-                    if success:
-                        processed.append(message)
-                    else:
-                        failed.append(message)
-                except Exception as exc:
-                    db.session.rollback()
-                    current_app.logger.error(
-                        'Resume batch upload failed for %s and job %s\n%s',
-                        file.filename,
-                        job.id,
-                        traceback.format_exc()
-                    )
-                    failed.append(f'{job.title}: {file.filename}: {exc}')
+            try:
+                success, message = process_resume_file(file, job)
+                if success:
+                    processed.append(message)
                 else:
-                    db.session.commit()
+                    failed.append(message)
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.error(
+                    'Resume batch upload failed for %s\n%s',
+                    file.filename,
+                    traceback.format_exc()
+                )
+                failed.append(f'{file.filename}: {exc}')
+            else:
+                db.session.commit()
 
         if processed:
-            flash(f'Processed {len(processed)} job screening(s) successfully: {"; ".join(processed)}', 'success')
+            flash(f'Processed {len(processed)} resume(s) successfully: {"; ".join(processed)}', 'success')
         if failed:
-            flash(f'{len(failed)} job screening(s) failed: {"; ".join(failed)}', 'danger')
+            flash(f'{len(failed)} resume(s) failed: {"; ".join(failed)}', 'danger')
 
         if processed:
-            if selected_job == 'all':
-                return redirect(url_for('screening.screening_results'))
-            return redirect(url_for('screening.screening_results', job_id=target_jobs[0].id))
+            return redirect(url_for('screening.screening_results', job_id=job.id))
         else:
             return redirect(request.url)
                 

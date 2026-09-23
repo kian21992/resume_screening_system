@@ -99,10 +99,9 @@ application and never use the sample passwords on a public server.
 | Create or edit jobs | Yes | Yes | Yes |
 | Delete jobs or candidates | Yes | No | Yes |
 
-On the resume upload page, a user can select one posted job or **All posted jobs**.
-The same resume is screened separately for each selected job, so its scores and
-recommendation may differ. Duplicate uploads are blocked within a job, but the
-same resume can be screened for another job owned by the same browser.
+Each upload targets one posted job. The same applicant can be screened for a
+different job in a separate upload, with a separate score and recommendation.
+Duplicate uploads are blocked only within the same job and browser.
 
 The initializer creates `system_admin` for local demonstrations. You can also
 assign the admin role to another existing trusted user with:
