@@ -1195,7 +1195,18 @@ REFERENCES
     ]
 
 
-def test_myca_labelled_sections_preserve_skills_education_and_current_work():
+def test_myca_labelled_sections_preserve_skills_education_and_current_work(monkeypatch):
+    from datetime import datetime
+    from app.services import nlp_pipeline
+
+    class ReferenceDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 1, tzinfo=tz)
+
+    # "Present" is relative to the extraction date; keep this fixture stable.
+    monkeypatch.setattr(nlp_pipeline, "datetime", ReferenceDateTime)
+
     text = """Myca Angela C. Lingad
 EDUCATION
 TERTIARY : City College of Angeles (Bachelor of Technical Vocational

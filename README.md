@@ -77,14 +77,14 @@ prebuilt image link, publish it to Docker Hub using the instructions below.
 
 ### Publish the image to Docker Hub
 
-Create a Docker Hub account and a **public** repository named
-`resume-screening-system`. Replace `YOUR_DOCKERHUB_USERNAME` in these commands
-with your Docker Hub username (which may differ from your GitHub username):
+The thesis image repository is
+[arssthesis2026/resume-screening-system](https://hub.docker.com/r/arssthesis2026/resume-screening-system).
+Maintainers with push access can build and publish a release:
 
 ```bash
 docker login
-docker build -t YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0 .
-docker push YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0
+docker build -t arssthesis2026/resume-screening-system:1.0.0 .
+docker push arssthesis2026/resume-screening-system:1.0.0
 ```
 
 Complete Docker's sign-in flow yourself; never put account passwords or access
@@ -94,16 +94,16 @@ NLP resources, without your private environment file, database, or resumes.
 After a successful push, the appendix can include:
 
 - GitHub repository: https://github.com/kian21992/resume_screening_system
-- Docker Hub image repository: `https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/resume-screening-system`
-- Image version: `YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0`
+- Docker Hub image repository: https://hub.docker.com/r/arssthesis2026/resume-screening-system
+- Image version: `arssthesis2026/resume-screening-system:1.0.0`
 
-The Docker Hub URL above is a template until you create the repository and
-publish the image. This Flask project serves its web pages and backend from
-one application image, so it needs one Docker Hub image link.
+This Flask project serves its web pages and backend from one application
+image, so it needs one Docker Hub image link. Appendix text is available in
+[docs/APPENDIX_O.md](docs/APPENDIX_O.md).
 
 To evaluate the published image, clone the GitHub repository, create `.env`
 with a private `SECRET_KEY` as described above, and set `DOCKER_IMAGE` in that
-file to `YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0`. Then run:
+file to `arssthesis2026/resume-screening-system:1.0.0`. Then run:
 
 ```bash
 docker compose up --no-build --pull always -d
