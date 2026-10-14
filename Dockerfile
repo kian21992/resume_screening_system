@@ -12,7 +12,7 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 appuser
+    && useradd --create-home --uid 1000 appuser
 
 COPY requirements.txt ./
 RUN python -m pip install -r requirements.txt \
