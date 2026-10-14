@@ -52,7 +52,7 @@ threads. The Compose configuration is for local HTTP evaluation and binds only
 to this computer. Public hosting needs HTTPS, production settings, private
 account credentials, and appropriate rate-limit storage.
 
-SQLite and resume uploads are stored in the named `screening_data` volume under
+SQLite and resume uploads are stored in the named `app_data` volume under
 `/app/instance`. Container recreation and image rebuilds preserve this data.
 This volume is separate from the `instance/` directory used by manual Python
 setup; Docker does not import your existing local database or resumes.

@@ -15,8 +15,8 @@ services:
       UPLOAD_FOLDER: /app/instance/uploads
       RATELIMIT_STORAGE_URI: memory://
     volumes:
-      - screening_data:/app/instance
+      - app_data:/app/instance
     restart: unless-stopped
 
 volumes:
-  screening_data:
+  app_data:
