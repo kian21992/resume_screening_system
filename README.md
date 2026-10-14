@@ -2,6 +2,117 @@
 
 A Flask-based resume screening system for uploading resumes, extracting candidate details, matching skills against job descriptions, and reviewing screening results.
 
+## Run with Docker (thesis evaluation)
+
+Install Docker Desktop with the WSL 2 backend on Windows, or Docker Engine with
+the Compose plugin on Linux. Start Docker before running these commands. No
+local Python installation is required for the Docker setup.
+
+1. Clone the repository and enter it:
+
+   ```bash
+   git clone https://github.com/kian21992/resume_screening_system.git
+   cd resume_screening_system
+   ```
+
+2. Create your private environment file. In Windows PowerShell:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+   On Linux/macOS, use `cp .env.example .env` instead. Generate a secret:
+
+   ```bash
+   docker run --rm python:3.11-slim-bookworm python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+   Put the generated value after `SECRET_KEY=` in `.env`. Keep the same key
+   between restarts: changing it invalidates browser sessions and their device
+   identities. The private `.env` file is excluded from Git and Docker images.
+
+3. Build and start the system:
+
+   ```bash
+   docker compose up --build -d
+   docker compose exec web python init_db.py
+   ```
+
+   The first build needs internet access to download Python, dependencies,
+   the spaCy model, and NLTK data. Later starts use the built image. The
+   initializer creates the three local demonstration accounts listed below;
+   it is safe to rerun and preserves existing account passwords and roles.
+
+4. Open **http://localhost:5000**, sign in with a demonstration account, and
+   create jobs from that browser before uploading resumes. If port 5000 is
+   already used, set `APP_PORT=5001` in `.env` and use port 5001 in the URL.
+
+The container runs Gunicorn as an unprivileged user with one worker and two
+threads. The Compose configuration is for local HTTP evaluation and binds only
+to this computer. Public hosting needs HTTPS, production settings, private
+account credentials, and appropriate rate-limit storage.
+
+SQLite and resume uploads are stored in the named `screening_data` volume under
+`/app/instance`. Container recreation and image rebuilds preserve this data.
+This volume is separate from the `instance/` directory used by manual Python
+setup; Docker does not import your existing local database or resumes.
+
+Useful commands:
+
+```bash
+docker compose ps              # Check running status and health
+docker compose logs -f web     # Follow application logs (Ctrl+C to stop following)
+docker compose down            # Stop/remove containers; preserve stored data
+docker compose up -d           # Start again with the existing image and data
+```
+
+`docker compose down --volumes` permanently deletes the Docker database and
+uploaded resumes. Use it only when intentionally resetting a demonstration.
+
+For GitHub submission, commit `Dockerfile`, `compose.yaml`, `.dockerignore`,
+`scripts/docker-entrypoint.sh`, `.env.example`, and this README along with the
+application source. Do not commit `.env`, databases, or applicant files. A
+fresh clone should run using the steps above. If your school also requires a
+prebuilt image link, publish it to Docker Hub using the instructions below.
+
+### Publish the image to Docker Hub
+
+Create a Docker Hub account and a **public** repository named
+`resume-screening-system`. Replace `YOUR_DOCKERHUB_USERNAME` in these commands
+with your Docker Hub username (which may differ from your GitHub username):
+
+```bash
+docker login
+docker build -t YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0 .
+docker push YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0
+```
+
+Complete Docker's sign-in flow yourself; never put account passwords or access
+tokens in this repository. The published image contains the application and
+NLP resources, without your private environment file, database, or resumes.
+
+After a successful push, the appendix can include:
+
+- GitHub repository: https://github.com/kian21992/resume_screening_system
+- Docker Hub image repository: `https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/resume-screening-system`
+- Image version: `YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0`
+
+The Docker Hub URL above is a template until you create the repository and
+publish the image. This Flask project serves its web pages and backend from
+one application image, so it needs one Docker Hub image link.
+
+To evaluate the published image, clone the GitHub repository, create `.env`
+with a private `SECRET_KEY` as described above, and set `DOCKER_IMAGE` in that
+file to `YOUR_DOCKERHUB_USERNAME/resume-screening-system:1.0.0`. Then run:
+
+```bash
+docker compose up --no-build --pull always -d
+docker compose exec web python init_db.py
+```
+
+Open http://localhost:5000. Docker Hub stores the downloadable image; it does
+not provide a hosted web application URL.
+
 ## Setup
 
 1. Clone the repository:
