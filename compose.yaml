@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    env_file: .env
+    environment:
+      APP_ENV: development
+      FLASK_DEBUG: "0"
+      SECRET_KEY: ${SECRET_KEY:?Set a stable SECRET_KEY in .env before starting Docker Compose}
+      UPLOAD_FOLDER: /app/instance/uploads
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - app_data:/app/instance
+
+volumes:
+  app_data:

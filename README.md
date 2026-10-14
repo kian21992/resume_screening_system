@@ -65,6 +65,48 @@ Open the local URL shown in the terminal, usually:
 http://127.0.0.1:5000
 ```
 
+## Run with Docker (local thesis demo)
+
+Install Docker Desktop (or Docker Engine with the Compose plugin), then run these
+commands from the repository folder. On Windows PowerShell, create your private
+configuration file with:
+
+```powershell
+Copy-Item .env.example .env
+docker run --rm python:3.11-slim-bookworm python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Copy the generated value into `SECRET_KEY=` in `.env`. Keep the same value on
+later runs: browser identities are signed with this key. Never commit `.env`.
+On macOS or Linux, use `cp .env.example .env` instead of `Copy-Item`.
+
+Build the image, create the local demonstration accounts, and start the app:
+
+```bash
+docker compose build
+docker compose run --rm web python init_db.py
+docker compose up -d
+```
+
+Open <http://127.0.0.1:5000> and sign in with one of the demonstration accounts
+listed below. To see startup output or stop the app:
+
+```bash
+docker compose logs -f web
+docker compose down
+```
+
+The `app_data` Docker volume stores the SQLite database and uploaded resumes,
+so ordinary `docker compose down` and later restarts preserve them. Running
+`docker compose down --volumes` deletes that demo data. The image includes the
+spaCy model and NLTK data; no separate NLP installation is needed. After code or
+dependency changes, rebuild with `docker compose up --build -d`.
+
+This Compose setup serves the local demo over HTTP and binds only to your own
+computer. It uses the documented sample passwords, so do not expose it publicly.
+The existing Render deployment uses its own PostgreSQL service and deployment
+settings rather than this local Compose setup.
+
 ## Default Accounts
 
 The database initializer creates these sample accounts:
