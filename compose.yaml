@@ -1,16 +1,22 @@
 services:
   web:
     build: .
-    env_file: .env
+    image: "${DOCKER_IMAGE:-resume_screening_system-web:latest}"
+    ports:
+      - "127.0.0.1:${APP_PORT:-5000}:5000"
+    env_file:
+      - .env
     environment:
+      # Local evaluation uses HTTP. Public HTTPS hosting requires production settings.
       APP_ENV: development
       FLASK_DEBUG: "0"
-      SECRET_KEY: ${SECRET_KEY:?Set a stable SECRET_KEY in .env before starting Docker Compose}
+      SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env before starting Docker}"
+      DATABASE_URL: sqlite:////app/instance/resume_screening.db
       UPLOAD_FOLDER: /app/instance/uploads
-    ports:
-      - "127.0.0.1:5000:5000"
+      RATELIMIT_STORAGE_URI: memory://
     volumes:
       - app_data:/app/instance
+    restart: unless-stopped
 
 volumes:
   app_data:

@@ -2,6 +2,117 @@
 
 A Flask-based resume screening system for uploading resumes, extracting candidate details, matching skills against job descriptions, and reviewing screening results.
 
+## Run with Docker (thesis evaluation)
+
+Install Docker Desktop with the WSL 2 backend on Windows, or Docker Engine with
+the Compose plugin on Linux. Start Docker before running these commands. No
+local Python installation is required for the Docker setup.
+
+1. Clone the repository and enter it:
+
+   ```bash
+   git clone https://github.com/kian21992/resume_screening_system.git
+   cd resume_screening_system
+   ```
+
+2. Create your private environment file. In Windows PowerShell:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+   On Linux/macOS, use `cp .env.example .env` instead. Generate a secret:
+
+   ```bash
+   docker run --rm python:3.11-slim-bookworm python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+   Put the generated value after `SECRET_KEY=` in `.env`. Keep the same key
+   between restarts: changing it invalidates browser sessions and their device
+   identities. The private `.env` file is excluded from Git and Docker images.
+
+3. Build and start the system:
+
+   ```bash
+   docker compose up --build -d
+   docker compose exec web python init_db.py
+   ```
+
+   The first build needs internet access to download Python, dependencies,
+   the spaCy model, and NLTK data. Later starts use the built image. The
+   initializer creates the three local demonstration accounts listed below;
+   it is safe to rerun and preserves existing account passwords and roles.
+
+4. Open **http://localhost:5000**, sign in with a demonstration account, and
+   create jobs from that browser before uploading resumes. If port 5000 is
+   already used, set `APP_PORT=5001` in `.env` and use port 5001 in the URL.
+
+The container runs Gunicorn as an unprivileged user with one worker and two
+threads. The Compose configuration is for local HTTP evaluation and binds only
+to this computer. Public hosting needs HTTPS, production settings, private
+account credentials, and appropriate rate-limit storage.
+
+SQLite and resume uploads are stored in the named `app_data` volume under
+`/app/instance`. Container recreation and image rebuilds preserve this data.
+This volume is separate from the `instance/` directory used by manual Python
+setup; Docker does not import your existing local database or resumes.
+
+Useful commands:
+
+```bash
+docker compose ps              # Check running status and health
+docker compose logs -f web     # Follow application logs (Ctrl+C to stop following)
+docker compose down            # Stop/remove containers; preserve stored data
+docker compose up -d           # Start again with the existing image and data
+```
+
+`docker compose down --volumes` permanently deletes the Docker database and
+uploaded resumes. Use it only when intentionally resetting a demonstration.
+
+For GitHub submission, commit `Dockerfile`, `compose.yaml`, `.dockerignore`,
+`scripts/docker-entrypoint.sh`, `.env.example`, and this README along with the
+application source. Do not commit `.env`, databases, or applicant files. A
+fresh clone should run using the steps above. If your school also requires a
+prebuilt image link, publish it to Docker Hub using the instructions below.
+
+### Publish the image to Docker Hub
+
+The thesis image repository is
+[arssthesis2026/resume-screening-system](https://hub.docker.com/r/arssthesis2026/resume-screening-system).
+Maintainers with push access can build and publish a release:
+
+```bash
+docker login
+docker build -t arssthesis2026/resume-screening-system:1.0.0 .
+docker push arssthesis2026/resume-screening-system:1.0.0
+```
+
+Complete Docker's sign-in flow yourself; never put account passwords or access
+tokens in this repository. The published image contains the application and
+NLP resources, without your private environment file, database, or resumes.
+
+After a successful push, the appendix can include:
+
+- GitHub repository: https://github.com/kian21992/resume_screening_system
+- Docker Hub image repository: https://hub.docker.com/r/arssthesis2026/resume-screening-system
+- Image version: `arssthesis2026/resume-screening-system:1.0.0`
+
+This Flask project serves its web pages and backend from one application
+image, so it needs one Docker Hub image link. Appendix text is available in
+[docs/APPENDIX_O.md](docs/APPENDIX_O.md).
+
+To evaluate the published image, clone the GitHub repository, create `.env`
+with a private `SECRET_KEY` as described above, and set `DOCKER_IMAGE` in that
+file to `arssthesis2026/resume-screening-system:1.0.0`. Then run:
+
+```bash
+docker compose up --no-build --pull always -d
+docker compose exec web python init_db.py
+```
+
+Open http://localhost:5000. Docker Hub stores the downloadable image; it does
+not provide a hosted web application URL.
+
 ## Setup
 
 1. Clone the repository:
@@ -64,48 +175,6 @@ Open the local URL shown in the terminal, usually:
 ```text
 http://127.0.0.1:5000
 ```
-
-## Run with Docker (local thesis demo)
-
-Install Docker Desktop (or Docker Engine with the Compose plugin), then run these
-commands from the repository folder. On Windows PowerShell, create your private
-configuration file with:
-
-```powershell
-Copy-Item .env.example .env
-docker run --rm python:3.11-slim-bookworm python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-Copy the generated value into `SECRET_KEY=` in `.env`. Keep the same value on
-later runs: browser identities are signed with this key. Never commit `.env`.
-On macOS or Linux, use `cp .env.example .env` instead of `Copy-Item`.
-
-Build the image, create the local demonstration accounts, and start the app:
-
-```bash
-docker compose build
-docker compose run --rm web python init_db.py
-docker compose up -d
-```
-
-Open <http://127.0.0.1:5000> and sign in with one of the demonstration accounts
-listed below. To see startup output or stop the app:
-
-```bash
-docker compose logs -f web
-docker compose down
-```
-
-The `app_data` Docker volume stores the SQLite database and uploaded resumes,
-so ordinary `docker compose down` and later restarts preserve them. Running
-`docker compose down --volumes` deletes that demo data. The image includes the
-spaCy model and NLTK data; no separate NLP installation is needed. After code or
-dependency changes, rebuild with `docker compose up --build -d`.
-
-This Compose setup serves the local demo over HTTP and binds only to your own
-computer. It uses the documented sample passwords, so do not expose it publicly.
-The existing Render deployment uses its own PostgreSQL service and deployment
-settings rather than this local Compose setup.
 
 ## Default Accounts
 
