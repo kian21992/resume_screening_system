@@ -2,117 +2,6 @@
 
 A Flask-based resume screening system for uploading resumes, extracting candidate details, matching skills against job descriptions, and reviewing screening results.
 
-## Run with Docker (thesis evaluation)
-
-Install Docker Desktop with the WSL 2 backend on Windows, or Docker Engine with
-the Compose plugin on Linux. Start Docker before running these commands. No
-local Python installation is required for the Docker setup.
-
-1. Clone the repository and enter it:
-
-   ```bash
-   git clone https://github.com/kian21992/resume_screening_system.git
-   cd resume_screening_system
-   ```
-
-2. Create your private environment file. In Windows PowerShell:
-
-   ```powershell
-   Copy-Item .env.example .env
-   ```
-
-   On Linux/macOS, use `cp .env.example .env` instead. Generate a secret:
-
-   ```bash
-   docker run --rm python:3.11-slim-bookworm python -c "import secrets; print(secrets.token_urlsafe(48))"
-   ```
-
-   Put the generated value after `SECRET_KEY=` in `.env`. Keep the same key
-   between restarts: changing it invalidates browser sessions and their device
-   identities. The private `.env` file is excluded from Git and Docker images.
-
-3. Build and start the system:
-
-   ```bash
-   docker compose up --build -d
-   docker compose exec web python init_db.py
-   ```
-
-   The first build needs internet access to download Python, dependencies,
-   the spaCy model, and NLTK data. Later starts use the built image. The
-   initializer creates the three local demonstration accounts listed below;
-   it is safe to rerun and preserves existing account passwords and roles.
-
-4. Open **http://localhost:5000**, sign in with a demonstration account, and
-   create jobs from that browser before uploading resumes. If port 5000 is
-   already used, set `APP_PORT=5001` in `.env` and use port 5001 in the URL.
-
-The container runs Gunicorn as an unprivileged user with one worker and two
-threads. The Compose configuration is for local HTTP evaluation and binds only
-to this computer. Public hosting needs HTTPS, production settings, private
-account credentials, and appropriate rate-limit storage.
-
-SQLite and resume uploads are stored in the named `app_data` volume under
-`/app/instance`. Container recreation and image rebuilds preserve this data.
-This volume is separate from the `instance/` directory used by manual Python
-setup; Docker does not import your existing local database or resumes.
-
-Useful commands:
-
-```bash
-docker compose ps              # Check running status and health
-docker compose logs -f web     # Follow application logs (Ctrl+C to stop following)
-docker compose down            # Stop/remove containers; preserve stored data
-docker compose up -d           # Start again with the existing image and data
-```
-
-`docker compose down --volumes` permanently deletes the Docker database and
-uploaded resumes. Use it only when intentionally resetting a demonstration.
-
-For GitHub submission, commit `Dockerfile`, `compose.yaml`, `.dockerignore`,
-`scripts/docker-entrypoint.sh`, `.env.example`, and this README along with the
-application source. Do not commit `.env`, databases, or applicant files. A
-fresh clone should run using the steps above. If your school also requires a
-prebuilt image link, publish it to Docker Hub using the instructions below.
-
-### Publish the image to Docker Hub
-
-The thesis image repository is
-[arssthesis2026/resume-screening-system](https://hub.docker.com/r/arssthesis2026/resume-screening-system).
-Maintainers with push access can build and publish a release:
-
-```bash
-docker login
-docker build -t arssthesis2026/resume-screening-system:1.0.0 .
-docker push arssthesis2026/resume-screening-system:1.0.0
-```
-
-Complete Docker's sign-in flow yourself; never put account passwords or access
-tokens in this repository. The published image contains the application and
-NLP resources, without your private environment file, database, or resumes.
-
-After a successful push, the appendix can include:
-
-- GitHub repository: https://github.com/kian21992/resume_screening_system
-- Docker Hub image repository: https://hub.docker.com/r/arssthesis2026/resume-screening-system
-- Image version: `arssthesis2026/resume-screening-system:1.0.0`
-
-This Flask project serves its web pages and backend from one application
-image, so it needs one Docker Hub image link. Appendix text is available in
-[docs/APPENDIX_O.md](docs/APPENDIX_O.md).
-
-To evaluate the published image, clone the GitHub repository, create `.env`
-with a private `SECRET_KEY` as described above, and set `DOCKER_IMAGE` in that
-file to `arssthesis2026/resume-screening-system:1.0.0`. Then run:
-
-```bash
-docker compose up --no-build --pull always -d
-docker compose exec web python init_db.py
-```
-
-Open http://localhost:5000. Docker Hub stores the downloadable image; it does
-not provide a hosted web application URL.
-
 ## Setup
 
 1. Clone the repository:
@@ -155,14 +44,11 @@ generate one with:
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-6. Initialize the database with sample users:
+6. Initialize the database with sample users and jobs:
 
 ```bash
 python init_db.py
 ```
-
-Jobs are device-owned, so create demonstration jobs from the web interface in
-the browser profile that should own them.
 
 7. Run the application:
 
@@ -207,12 +93,8 @@ application and never use the sample passwords on a public server.
 | --- | --- | --- | --- |
 | View jobs and candidates | Yes | Yes | Yes |
 | Upload resumes and review candidates | Yes | Yes | Yes |
-| Create or edit jobs | Yes | Yes | Yes |
-| Delete jobs or candidates | Yes | No | Yes |
-
-Each upload targets one posted job. The same applicant can be screened for a
-different job in a separate upload, with a separate score and recommendation.
-Duplicate uploads are blocked only within the same job and browser.
+| Create or edit jobs | No | Yes | Yes |
+| Delete jobs or candidates | No | No | Yes |
 
 The initializer creates `system_admin` for local demonstrations. You can also
 assign the admin role to another existing trusted user with:
@@ -236,85 +118,6 @@ use. Configure `RATELIMIT_STORAGE_URI` with a shared backend such as Redis when
 the deployment runs multiple workers. If the application is behind a reverse
 proxy, configure trusted proxy handling at the hosting layer so the application
 receives the correct client address.
-
-## Device-isolated screening data
-
-Each browser profile receives a random 256-bit `device_id` in Flask's signed,
-persistent session cookie. Applicants, resumes, extracted fields, screening
-results, recommendations, rankings, duplicate checks, dashboard totals, and
-executive-summary totals are scoped to that identifier on the server. Jobs and
-their screening criteria are device-owned as well. Job lists, upload choices,
-and direct job URLs are filtered by the same identifier.
-
-The identifier survives login/logout and normal browser restarts. Clearing site
-cookies or using private browsing creates a new device identity, so the previous
-browser's records will no longer be visible from that browser profile. Copying a
-valid session cookie also copies its device identity; always use HTTPS and keep
-`SECRET_KEY` private in production.
-
-Before starting an upgraded installation against an existing database, back up
-the database and run the idempotent migration:
-
-```bash
-python -m flask --app app migrate-device-isolation
-```
-
-For existing jobs, the migration infers ownership from their oldest
-device-owned candidate data. Historical candidate rows belonging to a different
-device are preserved on a hidden legacy job copy so they cannot block safe job
-management or leak job details. Records without trustworthy browser ownership
-are assigned a reserved legacy identifier that no browser can receive,
-quarantining them from the user interface. Fresh databases created after this
-change already contain the required columns and indexes; the migration command
-will report that the schema is up to date.
-
-Run the device-isolation and security regression tests with:
-
-```bash
-python -m pytest -q tests/test_device_isolation.py tests/test_security.py tests/test_reviewer_workflow.py
-```
-
-Run the complete test suite with:
-
-```bash
-python -m pytest -q
-```
-
-## Render thesis deployment
-
-The repository includes a `render.yaml` Blueprint for a free, temporary thesis
-deployment in Render's Singapore region. It provisions one Flask web service
-and one private Render Postgres database. Render prompts for these secrets when
-you create the Blueprint:
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/kian21992/resume_screening_system)
-
-- `INITIAL_ADMIN_USERNAME`
-- `INITIAL_ADMIN_PASSWORD` (at least 12 characters)
-- `INITIAL_MANAGER_PASSWORD` (at least 12 characters; creates `it_manager`)
-- `INITIAL_HR_PASSWORD` (at least 12 characters; creates `hr_admin`)
-
-The deployment generates `SECRET_KEY`, installs the pinned spaCy model and NLTK
-data, runs the device-isolation migration, creates the initial administrator,
-manager, and HR users only when they are missing, and starts the application
-with Gunicorn. The manager and HR usernames can be overridden with
-`INITIAL_MANAGER_USERNAME` and `INITIAL_HR_USERNAME` environment variables.
-
-To deploy:
-
-1. Commit and push the repository to GitHub.
-2. In Render, choose **New > Blueprint** and connect this repository.
-3. Keep the `main` branch and `render.yaml` path selected.
-4. Enter private administrator, manager, and HR passwords when prompted.
-5. Apply the Blueprint and wait for both the database and web service to become
-   available.
-6. Open the generated `onrender.com` URL and sign in with the administrator.
-
-The free web service has an ephemeral filesystem. Uploaded resume files remain
-on the server only until Render restarts or redeploys the instance, although
-database-backed extracted text and screening results remain until the free
-database expires. Use only synthetic resumes for this thesis demo. Upgrade the
-web service and attach a persistent disk before storing real applicant files.
 
 ## Notes
 
