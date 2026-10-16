@@ -67,6 +67,98 @@ http://127.0.0.1:5000
 
 ## Run with Docker (local thesis demo)
 
+### Run the published image (Windows PowerShell)
+
+Install and start Docker Desktop, then run these commands in PowerShell. This
+method pulls the prebuilt image from Docker Hub, so it does not require a local
+Python installation or a clone of this repository.
+
+1. Check Docker and confirm its engine is running:
+
+   ~~~powershell
+   docker --version
+   docker info
+   ~~~
+
+   If docker info cannot connect, start Docker Desktop and wait for it to finish
+   starting.
+
+2. Create a folder for this installation:
+
+   ~~~powershell
+   cd $HOME\Desktop
+   mkdir ARSS-Thesis
+   cd ARSS-Thesis
+   ~~~
+
+   Create the folder only once. On later runs, return to the same ARSS-Thesis
+   folder so you keep using its .env file.
+
+3. Download the image and check that it is present:
+
+   ~~~powershell
+   docker pull arssthesis2026/resume-screening-system:1.0.0
+   docker images
+   ~~~
+
+4. Generate a private secret key and create .env in the current folder:
+
+   ~~~powershell
+   $arssSecret = docker run --rm --entrypoint python arssthesis2026/resume-screening-system:1.0.0 -c "import secrets; print(secrets.token_urlsafe(48))"
+   "SECRET_KEY=$arssSecret" | Set-Content .env
+   Get-ChildItem -Force
+   notepad .env
+   ~~~
+
+   Notepad opens .env. Keep the generated SECRET_KEY line and add these account
+   settings. Replace each password placeholder with a different private
+   password containing at least 12 characters:
+
+   ~~~dotenv
+   SECRET_KEY=your-existing-generated-secret-key
+   INITIAL_ADMIN_USERNAME=system_admin
+   INITIAL_ADMIN_PASSWORD=your-private-admin-password
+   INITIAL_MANAGER_USERNAME=it_manager
+   INITIAL_MANAGER_PASSWORD=your-private-manager-password
+   INITIAL_HR_USERNAME=hr_admin
+   INITIAL_HR_PASSWORD=your-private-hr-password
+   ~~~
+
+   The SECRET_KEY line above shows where the already generated value belongs.
+   Do not replace your generated key with the literal example text. Save and
+   close Notepad. Keep .env private and reuse the same key on later runs; browser
+   identities are signed with it.
+
+5. Start the application and check that the container is running:
+
+   ~~~powershell
+   docker run -d --name arss-thesis -p 127.0.0.1:5000:5000 --env-file .env -e APP_ENV=development -e DATABASE_URL=sqlite:////app/instance/resume_screening.db -e UPLOAD_FOLDER=/app/instance/uploads -v arss_thesis_data:/app/instance arssthesis2026/resume-screening-system:1.0.0
+   docker ps
+   ~~~
+
+   If arss-thesis does not appear in docker ps, inspect its output with
+   docker logs arss-thesis.
+
+6. Create the admin, manager, and HR users from the private passwords in .env:
+
+   ~~~powershell
+   docker exec arss-thesis python -m flask --app app bootstrap-users
+   ~~~
+
+   This command creates missing users. It does not change passwords for users
+   already in the database.
+
+7. Open <http://localhost:5000> and sign in with an account from .env.
+
+The arss_thesis_data Docker volume stores the SQLite database and uploaded
+resumes. Use docker stop arss-thesis and docker start arss-thesis to stop and
+restart the same container. Keep .env in the ARSS-Thesis folder; changing that
+file alone does not update an already created container. The sample passwords
+in the Default Accounts section below apply to the init_db.py setup, not to
+the private accounts created with bootstrap-users.
+
+### Build from this repository with Docker Compose
+
 Install Docker Desktop (or Docker Engine with the Compose plugin), then run these
 commands from the repository folder. On Windows PowerShell, create your private
 configuration file with:
